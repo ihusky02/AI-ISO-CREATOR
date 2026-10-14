@@ -229,9 +229,21 @@ public class ContainerBuilderService : IIsoBuilderService
             {
                 containerImage = "fedora:40";
             }
-            else if (distroLower.Contains("debian") || distroLower.Contains("ubuntu"))
+            else if (distroLower.Contains("arch"))
+            {
+                containerImage = "archlinux:latest";
+            }
+            else if (distroLower.Contains("ubuntu"))
+            {
+                containerImage = "ubuntu:24.04";
+            }
+            else if (distroLower.Contains("debian"))
             {
                 containerImage = "debian:bookworm-slim";
+            }
+            else if (distroLower.Contains("suse"))
+            {
+                containerImage = "opensuse/tumbleweed:latest";
             }
             else
             {
@@ -438,15 +450,25 @@ public class ContainerBuilderService : IIsoBuilderService
         sb.AppendLine("mkdir -p \"$ROOTFS\" \"$ISODIR/boot/syslinux\" \"$ISODIR/boot/grub\" \"$OUTDIR\"");
         sb.AppendLine();
         sb.AppendLine("echo '[STAGE 1/5] Installing ISO build toolchain in worker container...'");
-        sb.AppendLine("if command -v dnf >/dev/null 2>&1; then");
+        sb.AppendLine("if command -v pacman >/dev/null 2>&1; then");
+        sb.AppendLine("    pacman -Sy --noconfirm xorriso syslinux squashfs-tools dosfstools arch-install-scripts");
+        sb.AppendLine("    echo '[STAGE 2/5] Bootstrapping target Arch rootfs via pacstrap...'");
+        sb.AppendLine($"    pacstrap -K \"$ROOTFS\" base linux linux-firmware {packagesStr} || true");
+        sb.AppendLine("elif command -v dnf >/dev/null 2>&1; then");
         sb.AppendLine("    dnf install -y --setopt=install_weak_deps=False xorriso squashfs-tools dosfstools syslinux");
         sb.AppendLine("    echo '[STAGE 2/5] Bootstrapping target rootfs via dnf...'");
         sb.AppendLine($"    dnf --installroot=\"$ROOTFS\" --releasever=40 -y install --setopt=install_weak_deps=False @core kernel {packagesStr} || true");
+        sb.AppendLine("elif command -v zypper >/dev/null 2>&1; then");
+        sb.AppendLine("    zypper -n install xorriso squashfs syslinux dosfstools");
+        sb.AppendLine("    echo '[STAGE 2/5] Bootstrapping target openSUSE rootfs via zypper...'");
+        sb.AppendLine($"    zypper --root \"$ROOTFS\" -n install patterns-base-base kernel-default {packagesStr} || true");
         sb.AppendLine("elif command -v apt-get >/dev/null 2>&1; then");
         sb.AppendLine("    apt-get update && apt-get install -y xorriso syslinux-common isolinux squashfs-tools dosfstools debootstrap");
         sb.AppendLine("    echo '[STAGE 2/5] Bootstrapping target rootfs via debootstrap...'");
-        sb.AppendLine("    debootstrap --arch=amd64 bookworm \"$ROOTFS\" http://deb.debian.org/debian/ || true");
-        sb.AppendLine($"    chroot \"$ROOTFS\" apt-get update && chroot \"$ROOTFS\" apt-get install -y linux-image-amd64 {packagesStr} || true");
+        sb.AppendLine("    DIST_SUITE=\"bookworm\"");
+        sb.AppendLine("    grep -qi ubuntu /etc/os-release && DIST_SUITE=\"noble\"");
+        sb.AppendLine("    debootstrap --arch=amd64 $DIST_SUITE \"$ROOTFS\" || true");
+        sb.AppendLine($"    chroot \"$ROOTFS\" apt-get update && chroot \"$ROOTFS\" apt-get install -y linux-image-generic linux-image-amd64 {packagesStr} || true");
         sb.AppendLine("else");
         sb.AppendLine("    apk update");
         sb.AppendLine("    apk add --no-cache xorriso syslinux squashfs-tools dosfstools grub-efi efibootmgr mtools bash shadow curl");

@@ -54,6 +54,24 @@ public class GeminiAiService : IGeminiAiService
             },
             new()
             {
+                Id = "arch-hyprland",
+                Title = "Arch Linux (Hyprland / Wayland)",
+                Description = "Bleeding-edge Arch Linux rolling release with Hyprland Wayland compositor, Alacritty, and dev tools",
+                Prompt = "Build a modern Arch Linux live distribution with Hyprland Wayland compositor, Waybar, Alacritty terminal, Neovim, Git, zsh, and pipewire audio.",
+                Category = "Desktop",
+                Icon = "terminal"
+            },
+            new()
+            {
+                Id = "ubuntu-server-docker",
+                Title = "Ubuntu 24.04 (Server & Docker)",
+                Description = "Ubuntu Noble server image with Docker engine, Docker Compose, Portainer, and OpenSSH",
+                Prompt = "Create an Ubuntu 24.04 LTS server ISO with Docker CE, docker-compose, OpenSSH server, UFW firewall, fail2ban, and btop monitoring.",
+                Category = "Server",
+                Icon = "server"
+            },
+            new()
+            {
                 Id = "dev-environment",
                 Title = "Developer Workstation",
                 Description = "Lightweight environment with C, Rust, Git, Neovim, tmux, and CLI utilities",
@@ -344,8 +362,8 @@ Your mission is to transform user intent expressed in natural language into a pr
 
 The returned format MUST be a valid JSON object with the following schema:
 {
-  "distribution": "alpine", "fedora", or "debian" (use "fedora" if requested by the user, "alpine" for lightweight systems),
-  "release": "40" for Fedora, "3.20" for Alpine, "bookworm" for Debian,
+  "distribution": "alpine", "fedora", "arch", "ubuntu", "debian", or "opensuse",
+  "release": "rolling" for Arch, "40" for Fedora, "24.04" for Ubuntu, "bookworm" for Debian, "3.20" for Alpine, "tumbleweed" for openSUSE,
   "arch": "x86_64",
   "isoLabel": "SHORT_UPPERCASE_LABEL_NO_SPACES",
   "hostname": "system-hostname",
@@ -370,9 +388,12 @@ The returned format MUST be a valid JSON object with the following schema:
 
 RULES:
 1. Ensure package names in `packages` match the selected distribution:
-   - For Fedora: use packages like `gcc-c++`, `cmake`, `dotnet-sdk-8.0`, `git`, `gnome-shell`, `win11-icon-theme`, `neovim`, `htop`, etc.
-   - For Alpine: use `build-base`, `bash`, `curl`, `xfce4`, `openssh`, etc.
-   - For Debian: use `build-essential`, `dotnet-sdk-8.0`, `xfce4`, `openssh-server`, etc.
+   - For Arch Linux: use pacman packages (`base-devel`, `git`, `neovim`, `hyprland`, `waybar`, `alacritty`, `zsh`, `sudo`).
+   - For Fedora: use dnf packages (`gcc-c++`, `cmake`, `dotnet-sdk-8.0`, `git`, `gnome-shell`, `win11-icon-theme`, `neovim`, `htop`).
+   - For Ubuntu: use apt packages (`build-essential`, `docker.io`, `docker-compose-v2`, `openssh-server`, `curl`, `htop`).
+   - For Alpine: use apk packages (`build-base`, `bash`, `curl`, `xfce4`, `openssh`, `htop`).
+   - For Debian: use apt packages (`build-essential`, `xfce4`, `openssh-server`, `sudo`, `curl`).
+   - For openSUSE: use zypper packages (`patterns-devel-base-devel_basis`, `kernel-default`, `git`, `curl`).
 2. Always ensure core essentials are included (e.g. bash/zsh, curl, sudo).
 3. If the user requests a graphical desktop (e.g. Windows 11-style, GNOME, XFCE), select the appropriate desktop environment and packages.
 4. Return ONLY the raw JSON object without markdown formatting or surrounding explanations.
@@ -385,6 +406,48 @@ RULES:
     private static IsoRecipe GenerateOfflineRecipe(string prompt)
     {
         var lower = prompt.ToLowerInvariant();
+
+        if (lower.Contains("arch"))
+        {
+            return new IsoRecipe
+            {
+                Distribution = "arch",
+                Release = "rolling",
+                Arch = "x86_64",
+                Hostname = "arch-ai",
+                IsoLabel = "ARCH_LINUX",
+                RootPassword = "root",
+                DefaultUsername = "user",
+                DefaultUserPassword = "live",
+                EnableSudo = true,
+                DesktopEnvironment = lower.Contains("hyprland") || lower.Contains("gui") ? "hyprland" : "none",
+                TargetUseCase = "Arch Linux Rolling Release Workstation",
+                Summary = "Arch Linux rolling release configured with bleeding-edge packages, development toolchain, and Wayland desktop.",
+                Packages = new List<string> { "base-devel", "git", "neovim", "zsh", "htop", "curl", "alacritty", "openssh", "sudo" },
+                ServicesToEnable = new List<string> { "sshd" }
+            };
+        }
+
+        if (lower.Contains("ubuntu"))
+        {
+            return new IsoRecipe
+            {
+                Distribution = "ubuntu",
+                Release = "24.04",
+                Arch = "x86_64",
+                Hostname = "ubuntu-ai",
+                IsoLabel = "UBUNTU_CUSTOM",
+                RootPassword = "root",
+                DefaultUsername = "ubuntu",
+                DefaultUserPassword = "live",
+                EnableSudo = true,
+                DesktopEnvironment = "none",
+                TargetUseCase = "Ubuntu Cloud & Container Infrastructure",
+                Summary = "Ubuntu 24.04 LTS optimized for cloud instances, Docker container workloads, and modern networking.",
+                Packages = new List<string> { "build-essential", "curl", "git", "docker.io", "openssh-server", "htop", "net-tools", "sudo" },
+                ServicesToEnable = new List<string> { "docker", "ssh" }
+            };
+        }
 
         if (lower.Contains("fedora"))
         {
