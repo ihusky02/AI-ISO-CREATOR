@@ -65,10 +65,12 @@ app.MapGet("/api/config", (AppSettingsService settingsSvc) =>
         Model = cfg.Model,
         AvailableModels = new[]
         {
-            "gemini-2.5-flash",
-            "gemini-2.5-pro",
-            "gemini-1.5-flash",
-            "gemini-1.5-pro"
+            "gemini-flash-latest",
+            "gemini-flash-lite-latest",
+            "gemini-3-flash-preview",
+            "gemini-3.1-pro-preview",
+            "gemini-3.1-flash-lite-preview",
+            "gemini-pro-latest"
         }
     });
 });

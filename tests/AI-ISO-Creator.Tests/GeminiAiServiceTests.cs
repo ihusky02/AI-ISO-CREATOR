@@ -19,7 +19,7 @@ public class GeminiAiServiceTests
         var settings = Options.Create(new GeminiSettings
         {
             ApiKey = "", // Empty to trigger offline deterministic fallback heuristics
-            Model = "gemini-2.5-flash"
+            Model = "gemini-flash-latest"
         });
 
         _service = new GeminiAiService(

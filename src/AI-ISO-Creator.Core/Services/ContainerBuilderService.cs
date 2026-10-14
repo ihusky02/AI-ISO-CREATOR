@@ -223,9 +223,20 @@ public class ContainerBuilderService : IIsoBuilderService
             NotifyJobUpdated(job);
 
             var isoOutputFileName = $"{job.Recipe.IsoLabel.ToLowerInvariant()}-{job.Id}.iso";
-            var containerImage = job.Recipe.Distribution.ToLowerInvariant().Contains("debian") 
-                ? "debian:bookworm-slim" 
-                : "alpine:3.20";
+            var distroLower = job.Recipe.Distribution.ToLowerInvariant();
+            string containerImage;
+            if (distroLower.Contains("fedora"))
+            {
+                containerImage = "fedora:40";
+            }
+            else if (distroLower.Contains("debian") || distroLower.Contains("ubuntu"))
+            {
+                containerImage = "debian:bookworm-slim";
+            }
+            else
+            {
+                containerImage = "alpine:3.20";
+            }
 
             var (success, errorMsg) = await RunPodmanProcessAsync(job, jobWorkDir, containerImage, ct);
 
@@ -427,12 +438,22 @@ public class ContainerBuilderService : IIsoBuilderService
         sb.AppendLine("mkdir -p \"$ROOTFS\" \"$ISODIR/boot/syslinux\" \"$ISODIR/boot/grub\" \"$OUTDIR\"");
         sb.AppendLine();
         sb.AppendLine("echo '[STAGE 1/5] Installing ISO build toolchain in worker container...'");
-        sb.AppendLine("apk update");
-        sb.AppendLine("apk add --no-cache xorriso syslinux squashfs-tools dosfstools grub-efi efibootmgr mtools bash shadow curl");
-        sb.AppendLine();
-        sb.AppendLine("echo '[STAGE 2/5] Bootstrapping target rootfs and installing packages...'");
-        sb.AppendLine("apk add --root \"$ROOTFS\" --initdb --repositories-file /etc/apk/repositories \\");
-        sb.AppendLine($"    alpine-base alpine-conf linux-lts mkinitfs {packagesStr}");
+        sb.AppendLine("if command -v dnf >/dev/null 2>&1; then");
+        sb.AppendLine("    dnf install -y --setopt=install_weak_deps=False xorriso squashfs-tools dosfstools syslinux");
+        sb.AppendLine("    echo '[STAGE 2/5] Bootstrapping target rootfs via dnf...'");
+        sb.AppendLine($"    dnf --installroot=\"$ROOTFS\" --releasever=40 -y install --setopt=install_weak_deps=False @core kernel {packagesStr} || true");
+        sb.AppendLine("elif command -v apt-get >/dev/null 2>&1; then");
+        sb.AppendLine("    apt-get update && apt-get install -y xorriso syslinux-common isolinux squashfs-tools dosfstools debootstrap");
+        sb.AppendLine("    echo '[STAGE 2/5] Bootstrapping target rootfs via debootstrap...'");
+        sb.AppendLine("    debootstrap --arch=amd64 bookworm \"$ROOTFS\" http://deb.debian.org/debian/ || true");
+        sb.AppendLine($"    chroot \"$ROOTFS\" apt-get update && chroot \"$ROOTFS\" apt-get install -y linux-image-amd64 {packagesStr} || true");
+        sb.AppendLine("else");
+        sb.AppendLine("    apk update");
+        sb.AppendLine("    apk add --no-cache xorriso syslinux squashfs-tools dosfstools grub-efi efibootmgr mtools bash shadow curl");
+        sb.AppendLine("    echo '[STAGE 2/5] Bootstrapping target rootfs via apk...'");
+        sb.AppendLine("    apk add --root \"$ROOTFS\" --initdb --repositories-file /etc/apk/repositories \\");
+        sb.AppendLine($"        alpine-base alpine-conf linux-lts mkinitfs {packagesStr}");
+        sb.AppendLine("fi");
         sb.AppendLine();
         sb.AppendLine("echo '[STAGE 3/5] Configuring target system users and services...'");
         sb.AppendLine($"echo '{recipe.Hostname}' > \"$ROOTFS/etc/hostname\"");
@@ -442,12 +463,12 @@ public class ContainerBuilderService : IIsoBuilderService
         if (!string.IsNullOrWhiteSpace(recipe.DefaultUsername))
         {
             sb.AppendLine($"# Create user {recipe.DefaultUsername}");
-            sb.AppendLine($"chroot \"$ROOTFS\" adduser -D -s /bin/bash {recipe.DefaultUsername} || true");
+            sb.AppendLine($"chroot \"$ROOTFS\" useradd -m -s /bin/bash {recipe.DefaultUsername} 2>/dev/null || chroot \"$ROOTFS\" adduser -D -s /bin/bash {recipe.DefaultUsername} || true");
             sb.AppendLine($"echo '{recipe.DefaultUsername}:{recipe.DefaultUserPassword}' | chroot \"$ROOTFS\" chpasswd || true");
             if (recipe.EnableSudo)
             {
-                sb.AppendLine("apk add --root \"$ROOTFS\" sudo || true");
-                sb.AppendLine($"chroot \"$ROOTFS\" addgroup {recipe.DefaultUsername} wheel || true");
+                sb.AppendLine("apk add --root \"$ROOTFS\" sudo 2>/dev/null || true");
+                sb.AppendLine($"chroot \"$ROOTFS\" usermod -aG wheel {recipe.DefaultUsername} 2>/dev/null || chroot \"$ROOTFS\" addgroup {recipe.DefaultUsername} wheel 2>/dev/null || true");
                 sb.AppendLine("echo '%wheel ALL=(ALL) ALL' >> \"$ROOTFS/etc/sudoers\" || true");
             }
         }

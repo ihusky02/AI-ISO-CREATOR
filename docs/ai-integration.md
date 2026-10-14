@@ -4,13 +4,14 @@
 Moduł integracji z Gemini AI (`GeminiAiService`) odpowiada za przekształcanie intencji użytkownika wyrażonej w naturalnym języku w precyzyjną, maszynowo czytelną recepturę budowy systemu Linux (ISO Recipe).
 
 ## Specyfikacja Modelu
-- **Rekomendowane modele**: `gemini-2.5-flash` (domyślny, szybki) lub `gemini-2.5-pro` (dla skomplikowanych konfiguracji kastomowych).
-- **Format komunikacji**: REST API Google Generative Language (`v1beta/models/...:generateContent`) z wymuszeniem strukturalnego JSON (JSON Schema / Structured Outputs).
+- **Rekomendowane modele**: `gemini-flash-latest` (domyślny, szybki), `gemini-flash-lite-latest`, `gemini-3-flash-preview` lub `gemini-3.1-pro-preview`.
+- **Wielomodelowy Fallback**: W przypadku napotkania limitu lub wycofania starszego modelu, system automatycznie ponawia próbę z aktywnym modelem `gemini-flash-latest`.
+- **Format komunikacji**: REST API Google Generative Language (`v1beta/models/...:generateContent`) z wymuszeniem ustrukturyzowanego JSON (`responseMimeType: "application/json"`).
 
 ## System Prompt
 Model otrzymuje system prompt definiujący schemat wyjściowy JSON zawierający:
-- `distribution`: bazowy system (np. alpine, debian, ubuntu)
+- `distribution`: bazowy system (np. alpine, fedora, debian)
 - `packages`: lista pakietów do zainstalowania
-- `services`: usługi systemowe do włączenia (np. ssh)
+- `services`: usługi systemowe do włączenia (np. ssh, NetworkManager)
 - `customCommands`: dodatkowe skrypty powłoki wykonywane podczas chroot
 - `kernelParameters`: parametry jądra Linuxa

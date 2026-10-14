@@ -11,9 +11,9 @@ public class GeminiSettings
     public string ApiKey { get; set; } = string.Empty;
 
     /// <summary>
-    /// Target Gemini model name (e.g. "gemini-2.5-flash", "gemini-2.5-pro").
+    /// Target Gemini model name (e.g. "gemini-flash-latest", "gemini-flash-lite-latest", "gemini-3.1-pro-preview").
     /// </summary>
-    public string Model { get; set; } = "gemini-2.5-flash";
+    public string Model { get; set; } = "gemini-flash-latest";
 
     /// <summary>
     /// Base URL for the Google Generative Language REST endpoint.

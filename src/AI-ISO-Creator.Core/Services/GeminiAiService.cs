@@ -45,6 +45,15 @@ public class GeminiAiService : IGeminiAiService
         {
             new()
             {
+                Id = "fedora-win11-dev",
+                Title = "Fedora (Win11 UI & Dev)",
+                Description = "Fedora Linux with Windows 11 style desktop theme, C++, C# (.NET 8), and IDE dependencies",
+                Prompt = "Build a Fedora Linux distribution with a modern Windows 11-style desktop theme, full developer toolchain for C++ (gcc, g++, cmake) and C# (.NET 8 SDK), Git, and JetBrains Rider dependencies.",
+                Category = "Workstation",
+                Icon = "layout"
+            },
+            new()
+            {
                 Id = "dev-environment",
                 Title = "Developer Workstation",
                 Description = "Lightweight environment with C, Rust, Git, Neovim, tmux, and CLI utilities",
@@ -78,15 +87,6 @@ public class GeminiAiService : IGeminiAiService
                 Prompt = "Build a lightweight ISO with XFCE graphical desktop, Chromium browser, Thunar file manager, terminal emulator, and mousepad editor.",
                 Category = "Desktop",
                 Icon = "monitor"
-            },
-            new()
-            {
-                Id = "kiosk-display",
-                Title = "Digital Signage / Kiosk",
-                Description = "Appliance booting directly into fullscreen browser kiosk mode",
-                Prompt = "Prepare an autonomous web kiosk that boots directly into full-screen browser mode displaying https://google.com.",
-                Category = "Embedded",
-                Icon = "tv"
             }
         };
     }
@@ -104,32 +104,40 @@ public class GeminiAiService : IGeminiAiService
             return false;
         }
 
-        try
+        var candidateModels = new List<string> { selectedModel };
+        if (!candidateModels.Contains("gemini-flash-latest")) candidateModels.Add("gemini-flash-latest");
+        if (!candidateModels.Contains("gemini-flash-lite-latest")) candidateModels.Add("gemini-flash-lite-latest");
+
+        foreach (var m in candidateModels)
         {
-            var url = $"{_settings.ApiUrl.TrimEnd('/')}/models/{selectedModel}:generateContent?key={key}";
-            var payload = new
+            try
             {
-                contents = new[]
+                var url = $"{_settings.ApiUrl.TrimEnd('/')}/models/{m}:generateContent?key={key}";
+                var payload = new
                 {
-                    new
+                    contents = new[]
                     {
-                        parts = new[]
+                        new
                         {
-                            new { text = "Respond with one word: OK" }
+                            parts = new[] { new { text = "Respond with one word: OK" } }
                         }
                     }
-                }
-            };
+                };
 
-            var jsonContent = new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json");
-            var response = await _httpClient.PostAsync(url, jsonContent, cancellationToken);
-            return response.IsSuccessStatusCode;
+                var jsonContent = new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json");
+                var response = await _httpClient.PostAsync(url, jsonContent, cancellationToken);
+                if (response.IsSuccessStatusCode)
+                {
+                    return true;
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed connection test with model {Model}", m);
+            }
         }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex, "Failed to test connection to Gemini API");
-            return false;
-        }
+
+        return false;
     }
 
     /// <summary>
@@ -175,44 +183,72 @@ public class GeminiAiService : IGeminiAiService
 
     /// <summary>
     /// Sends an HTTP request to the Gemini API and parses the returned JSON payload into an IsoRecipe instance.
+    /// Automatically performs fallback to newer, active models (e.g. gemini-flash-latest, gemini-flash-lite-latest) if the requested model returns 404/429/503.
     /// </summary>
     private async Task<IsoRecipe> CallGeminiAndParseRecipe(string systemPrompt, string userContent, string apiKey, string model, CancellationToken cancellationToken)
     {
-        var url = $"{_settings.ApiUrl.TrimEnd('/')}/models/{model}:generateContent?key={apiKey}";
+        var candidateModels = new List<string> { model };
+        if (!candidateModels.Contains("gemini-flash-latest")) candidateModels.Add("gemini-flash-latest");
+        if (!candidateModels.Contains("gemini-flash-lite-latest")) candidateModels.Add("gemini-flash-lite-latest");
+        if (!candidateModels.Contains("gemini-3.1-pro-preview")) candidateModels.Add("gemini-3.1-pro-preview");
+        if (!candidateModels.Contains("gemini-3-flash-preview")) candidateModels.Add("gemini-3-flash-preview");
 
-        var requestBody = new
+        Exception? lastException = null;
+
+        foreach (var currentModel in candidateModels)
         {
-            systemInstruction = new
+            try
             {
-                parts = new[] { new { text = systemPrompt } }
-            },
-            contents = new[]
-            {
-                new
+                var url = $"{_settings.ApiUrl.TrimEnd('/')}/models/{currentModel}:generateContent?key={apiKey}";
+
+                var requestBody = new
                 {
-                    role = "user",
-                    parts = new[] { new { text = userContent } }
+                    systemInstruction = new
+                    {
+                        parts = new[] { new { text = systemPrompt } }
+                    },
+                    contents = new[]
+                    {
+                        new
+                        {
+                            role = "user",
+                            parts = new[] { new { text = userContent } }
+                        }
+                    },
+                    generationConfig = new
+                    {
+                        temperature = 0.2,
+                        responseMimeType = "application/json"
+                    }
+                };
+
+                var content = new StringContent(JsonSerializer.Serialize(requestBody), Encoding.UTF8, "application/json");
+                var response = await _httpClient.PostAsync(url, content, cancellationToken);
+
+                if (response.IsSuccessStatusCode)
+                {
+                    var responseBody = await response.Content.ReadAsStringAsync(cancellationToken);
+                    var recipe = ParseRecipeFromGeminiResponse(responseBody);
+                    if (currentModel != model)
+                    {
+                        recipe.Summary = $"[Auto-fallback: used {currentModel} instead of {model}]: " + recipe.Summary;
+                    }
+                    return recipe;
                 }
-            },
-            generationConfig = new
-            {
-                temperature = 0.2,
-                responseMimeType = "application/json"
+
+                var errorResponse = await response.Content.ReadAsStringAsync(cancellationToken);
+                _logger.LogWarning("Gemini API error for model {Model} ({StatusCode}): {Body}. Trying fallback candidate...", 
+                    currentModel, response.StatusCode, errorResponse);
+                lastException = new HttpRequestException($"Gemini API error for model {currentModel} ({response.StatusCode}): {errorResponse}");
             }
-        };
-
-        var content = new StringContent(JsonSerializer.Serialize(requestBody), Encoding.UTF8, "application/json");
-        var response = await _httpClient.PostAsync(url, content, cancellationToken);
-
-        if (!response.IsSuccessStatusCode)
-        {
-            var errorResponse = await response.Content.ReadAsStringAsync(cancellationToken);
-            _logger.LogError("Gemini API error ({StatusCode}): {Body}", response.StatusCode, errorResponse);
-            throw new HttpRequestException($"Gemini API returned error {response.StatusCode}: {errorResponse}");
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                lastException = ex;
+                _logger.LogWarning(ex, "Exception calling Gemini model {Model}. Attempting next candidate...", currentModel);
+            }
         }
 
-        var responseBody = await response.Content.ReadAsStringAsync(cancellationToken);
-        return ParseRecipeFromGeminiResponse(responseBody);
+        throw lastException ?? new InvalidOperationException("Failed to generate recipe with all candidate Gemini models.");
     }
 
     /// <summary>
@@ -303,13 +339,13 @@ public class GeminiAiService : IGeminiAiService
     private static string BuildSystemInstruction()
     {
         return """
-You are an expert Linux distribution architect and specialist in building live bootable Linux ISO images (Alpine Linux and Debian/Ubuntu).
+You are an expert Linux distribution architect and specialist in building live bootable Linux ISO images (Alpine Linux, Fedora, and Debian/Ubuntu).
 Your mission is to transform user intent expressed in natural language into a precise, cohesive machine-readable Linux ISO build recipe (IsoRecipe).
 
 The returned format MUST be a valid JSON object with the following schema:
 {
-  "distribution": "alpine" or "debian" (Alpine is recommended for speed and compact size ~100MB),
-  "release": "3.20" for Alpine or "bookworm" for Debian,
+  "distribution": "alpine", "fedora", or "debian" (use "fedora" if requested by the user, "alpine" for lightweight systems),
+  "release": "40" for Fedora, "3.20" for Alpine, "bookworm" for Debian,
   "arch": "x86_64",
   "isoLabel": "SHORT_UPPERCASE_LABEL_NO_SPACES",
   "hostname": "system-hostname",
@@ -317,7 +353,7 @@ The returned format MUST be a valid JSON object with the following schema:
   "defaultUsername": "user",
   "defaultUserPassword": "live",
   "enableSudo": true,
-  "desktopEnvironment": "none", "xfce", or "i3",
+  "desktopEnvironment": "none", "xfce", "gnome", "kde", or "i3",
   "packages": [
     "list", "of", "packages", "compatible", "with", "the", "chosen", "distro"
   ],
@@ -329,13 +365,16 @@ The returned format MUST be a valid JSON object with the following schema:
   ],
   "kernelParameters": "quiet console=tty0",
   "summary": "Clear, professional technical rationale describing what this image contains and why.",
-  "targetUseCase": "Short summary of the primary use case (e.g., 'Network Auditor')"
+  "targetUseCase": "Short summary of the primary use case (e.g., 'Fedora Developer Workstation with Windows 11 GUI')"
 }
 
 RULES:
-1. Ensure package names in `packages` match the selected distribution (e.g., for Alpine use `openssh`, `util-linux`, `bash`, `neovim`, `build-base`; for Debian use `build-essential`, `openssh-server`, etc.).
-2. Always ensure core essentials are included (e.g. bash, curl, sudo/doas).
-3. If the user requests a graphical desktop, include proper X11/Wayland dependencies and the chosen window manager/desktop environment (e.g. xfce4, lightdm).
+1. Ensure package names in `packages` match the selected distribution:
+   - For Fedora: use packages like `gcc-c++`, `cmake`, `dotnet-sdk-8.0`, `git`, `gnome-shell`, `win11-icon-theme`, `neovim`, `htop`, etc.
+   - For Alpine: use `build-base`, `bash`, `curl`, `xfce4`, `openssh`, etc.
+   - For Debian: use `build-essential`, `dotnet-sdk-8.0`, `xfce4`, `openssh-server`, etc.
+2. Always ensure core essentials are included (e.g. bash/zsh, curl, sudo).
+3. If the user requests a graphical desktop (e.g. Windows 11-style, GNOME, XFCE), select the appropriate desktop environment and packages.
 4. Return ONLY the raw JSON object without markdown formatting or surrounding explanations.
 """;
     }
@@ -346,6 +385,28 @@ RULES:
     private static IsoRecipe GenerateOfflineRecipe(string prompt)
     {
         var lower = prompt.ToLowerInvariant();
+
+        if (lower.Contains("fedora"))
+        {
+            return new IsoRecipe
+            {
+                Distribution = "fedora",
+                Release = "40",
+                Arch = "x86_64",
+                Hostname = "fedora-ai",
+                IsoLabel = "FEDORA_DEV",
+                RootPassword = "root",
+                DefaultUsername = "user",
+                DefaultUserPassword = "live",
+                EnableSudo = true,
+                DesktopEnvironment = lower.Contains("win") || lower.Contains("gui") ? "gnome" : "none",
+                TargetUseCase = "Fedora C++/C# Developer Workstation with Modern GUI",
+                Summary = "Fedora Workstation configured with C++ tools (gcc-c++, cmake), .NET 8 SDK for C#, Git, and modern Windows 11 style UI enhancements.",
+                Packages = new List<string> { "gcc-c++", "cmake", "gdb", "dotnet-sdk-8.0", "git", "curl", "neovim", "htop", "gnome-shell", "gnome-terminal" },
+                ServicesToEnable = new List<string> { "NetworkManager", "sshd" }
+            };
+        }
+
         var recipe = new IsoRecipe
         {
             Distribution = "alpine",
