@@ -1,0 +1,312 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI-ISO-Creator — Custom Linux ISO Builder with Gemini AI</title>
+    <link rel="stylesheet" href="/css/app.css">
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>💿</text></svg>">
+</head>
+<body>
+
+    <!-- Main Navigation Bar -->
+    <header>
+        <div class="navbar-container">
+            <div class="logo-area">
+                <div class="logo-icon">💿</div>
+                <span>AI-ISO-Creator</span>
+            </div>
+
+            <div class="header-status-group">
+                <div id="status-gemini" class="badge-status" title="Gemini AI connectivity status">
+                    <span class="status-dot"></span> Checking Gemini...
+                </div>
+                <div id="status-podman" class="badge-status" title="Podman container runtime status">
+                    <span class="status-dot"></span> Podman...
+                </div>
+                <div id="status-qemu" class="badge-status" title="QEMU virtualization runtime status">
+                    <span class="status-dot"></span> QEMU...
+                </div>
+                <button id="btn-open-history" class="btn-header" title="View previously generated ISO builds">
+                    📁 Build History
+                </button>
+                <button id="btn-open-settings" class="btn-header" title="Configure Gemini AI settings">
+                    ⚙️ AI Settings
+                </button>
+            </div>
+        </div>
+    </header>
+
+    <!-- Main Workspace Container -->
+    <main>
+        
+        <!-- Hero Introduction -->
+        <section class="hero">
+            <h1>Build Tailored Linux Systems Using AI Prompts</h1>
+            <p>Describe your requirements in plain English. Gemini AI formulates the optimal distribution, packages, and configuration, while our rootless Podman engine compiles a bootable ISO.</p>
+        </section>
+
+        <!-- STEP 1: Gemini AI Prompt Assistant -->
+        <section id="step-prompt" class="card">
+            <div class="section-header">
+                <div class="section-title">
+                    <span>💡 Step 1: Provide System Prompt for Gemini AI</span>
+                </div>
+            </div>
+
+            <div class="prompt-area">
+                <textarea id="user-prompt" class="prompt-textarea" placeholder="E.g.: Create an ultralightweight rescue disk with tools for SSD/HDD diagnostics, partition recovery, RAM testing, and network utilities..."></textarea>
+
+                <div class="prompt-actions">
+                    <button id="btn-clear-prompt" class="btn-secondary">Clear</button>
+                    <button id="btn-generate-recipe" class="btn-primary">
+                        <span>✨ Generate Recipe with Gemini AI</span>
+                    </button>
+                </div>
+            </div>
+
+            <div style="margin-top: 1.5rem;">
+                <div style="font-size: 0.85rem; font-weight: 600; color: var(--text-muted); margin-bottom: 0.5rem;">
+                    Quick-start Prompt Presets (click to select):
+                </div>
+                <div id="presets-list" class="presets-grid">
+                    <!-- Presets populated dynamically via API -->
+                </div>
+            </div>
+        </section>
+
+        <!-- STEP 2: Recipe Review & Customization -->
+        <section id="step-recipe" class="card hidden">
+            <div class="section-header">
+                <div class="section-title">
+                    <span>📋 Step 2: Verify & Customize Recipe</span>
+                </div>
+            </div>
+
+            <!-- AI Architectural Rationale -->
+            <div class="ai-summary-box">
+                <strong style="color: #60a5fa; display: block; margin-bottom: 0.3rem;">🧠 Gemini AI Architecture Rationale:</strong>
+                <span id="recipe-summary">Loading description...</span>
+            </div>
+
+            <div class="recipe-section">
+                <!-- Left Column: Base parameters -->
+                <div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>Base Distribution:</label>
+                            <select id="field-distribution" class="form-control">
+                                <option value="alpine">Alpine Linux (Recommended, ~100MB)</option>
+                                <option value="debian">Debian GNU/Linux</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label>ISO Volume Label:</label>
+                            <input id="field-isolabel" type="text" class="form-control" value="AI_LINUX">
+                        </div>
+                    </div>
+
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>System Hostname:</label>
+                            <input id="field-hostname" type="text" class="form-control" value="ailinux">
+                        </div>
+                        <div class="form-group">
+                            <label>Desktop Environment:</label>
+                            <select id="field-desktop" class="form-control">
+                                <option value="none">None (Headless CLI)</option>
+                                <option value="xfce">XFCE4 (Lightweight Desktop)</option>
+                                <option value="i3">i3 Window Manager</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>Default Username:</label>
+                            <input id="field-username" type="text" class="form-control" value="user">
+                        </div>
+                        <div class="form-group">
+                            <label>Default User Password:</label>
+                            <input id="field-userpass" type="text" class="form-control" value="live">
+                        </div>
+                    </div>
+
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>Root Password:</label>
+                            <input id="field-rootpass" type="text" class="form-control" value="root">
+                        </div>
+                        <div class="form-group">
+                            <label>Kernel Parameters:</label>
+                            <input id="field-kernel" type="text" class="form-control" value="quiet console=tty0">
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Right Column: Packages & Conversational Refinement -->
+                <div>
+                    <div class="form-group">
+                        <label>Target Packages to Install:</label>
+                        <div id="packages-tags-container" class="packages-box">
+                            <!-- Package pills rendered dynamically -->
+                        </div>
+                        <div class="tag-input-group">
+                            <input id="new-pkg-input" type="text" class="form-control" placeholder="Type package name and press Enter...">
+                            <button id="btn-add-pkg" class="btn-secondary">Add</button>
+                        </div>
+                    </div>
+
+                    <!-- AI Conversational Refinement -->
+                    <div class="refine-box">
+                        <label style="font-size: 0.85rem; font-weight: 600; color: #a78bfa; margin-bottom: 0.4rem; display: block;">
+                            💬 Request Gemini AI Adjustments (e.g., "Add Wi-Fi tools and remove editor"):
+                        </label>
+                        <div style="display: flex; gap: 0.5rem;">
+                            <input id="refine-prompt" type="text" class="form-control" placeholder="Adjustment instruction...">
+                            <button id="btn-refine" class="btn-secondary" style="border-color: #8b5cf6;">
+                                <span>⚡ Refine with AI</span>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Start Build Action -->
+            <div style="margin-top: 2rem; display: flex; justify-content: flex-end; gap: 1rem;">
+                <button id="btn-start-build" class="btn-success">
+                    <span>🚀 Start ISO Build</span>
+                </button>
+            </div>
+        </section>
+
+        <!-- STEP 3: Live Build Center & Terminal Console -->
+        <section id="step-build" class="card hidden">
+            <div class="section-header">
+                <div class="section-title">
+                    <span>⚙️ Step 3: ISO Build Center (Rootless Podman)</span>
+                </div>
+                <button id="btn-cancel-build" class="btn-danger">Cancel Build</button>
+            </div>
+
+            <div class="build-progress-container">
+                <div class="progress-stats">
+                    <span id="build-status-msg">Initializing...</span>
+                    <span id="progress-percent-label">0%</span>
+                </div>
+                <div class="progress-bar-track">
+                    <div id="progress-bar" class="progress-bar-fill" style="width: 0%;"></div>
+                </div>
+            </div>
+
+            <!-- Live Terminal Window -->
+            <div class="terminal-window">
+                <div class="terminal-header">
+                    <div class="terminal-dots">
+                        <span class="terminal-dot dot-red"></span>
+                        <span class="terminal-dot dot-yellow"></span>
+                        <span class="terminal-dot dot-green"></span>
+                    </div>
+                    <span>Podman Container Console Stream</span>
+                    <span>stdout / stderr</span>
+                </div>
+                <div id="terminal-logs" class="terminal-body">
+                    <!-- Logs streamed via Server-Sent Events -->
+                </div>
+            </div>
+        </section>
+
+        <!-- STEP 4: Completed ISO Artifact -->
+        <section id="step-result" class="card hidden">
+            <div class="result-success-card">
+                <div class="success-icon-badge">✓</div>
+                <h2>Your Linux ISO Image is Ready!</h2>
+                <p style="color: var(--text-muted); max-width: 600px;">
+                    Hybrid ISO image supporting both legacy BIOS MBR and modern UEFI has been successfully built and verified.
+                </p>
+
+                <div class="result-details">
+                    <div class="result-meta-item">
+                        <div style="font-size: 0.75rem; color: var(--text-muted);">FILENAME:</div>
+                        <strong id="result-iso-name" style="color: #60a5fa;">system.iso</strong>
+                    </div>
+                    <div class="result-meta-item">
+                        <div style="font-size: 0.75rem; color: var(--text-muted);">SIZE:</div>
+                        <strong id="result-iso-size" style="color: #34d399;">0 MB</strong>
+                    </div>
+                    <div class="result-meta-item">
+                        <div style="font-size: 0.75rem; color: var(--text-muted);">SHA256 CHECKSUM:</div>
+                        <code id="result-iso-sha" style="font-size: 0.8rem; color: #cbd5e1;">-</code>
+                    </div>
+                </div>
+
+                <div class="result-actions">
+                    <button id="btn-download-iso" class="btn-primary" style="padding: 0.85rem 2rem; font-size: 1.1rem;">
+                        ⬇️ Download ISO Image
+                    </button>
+                    <button id="btn-test-qemu" class="btn-secondary" style="border-color: #10b981;">
+                        🖥️ Launch in QEMU VM
+                    </button>
+                    <button id="btn-new-build" class="btn-secondary">
+                        🔄 Create Another Image
+                    </button>
+                </div>
+            </div>
+        </section>
+
+    </main>
+
+    <!-- Gemini AI Settings Modal -->
+    <div id="modal-settings" class="modal-overlay">
+        <div class="modal-dialog">
+            <div class="modal-header">
+                <h3>⚙️ Gemini AI Configuration</h3>
+                <button id="btn-close-settings" class="modal-close">&times;</button>
+            </div>
+
+            <div class="form-group">
+                <label>Google Gemini API Key:</label>
+                <input id="settings-api-key" type="password" class="form-control" placeholder="AIzaSy...">
+                <small style="color: var(--text-muted); font-size: 0.75rem; margin-top: 0.25rem;">
+                    You can obtain a key for free at <a href="https://aistudio.google.com/" target="_blank" style="color: #60a5fa;">Google AI Studio</a>. The key will be stored locally in <code>user_settings.json</code>.
+                </small>
+            </div>
+
+            <div class="form-group" style="margin-top: 1rem;">
+                <label>Gemini Model:</label>
+                <select id="settings-model" class="form-control">
+                    <!-- Options populated dynamically -->
+                </select>
+            </div>
+
+            <div id="settings-test-status" style="margin: 1rem 0; font-size: 0.85rem;"></div>
+
+            <div style="display: flex; justify-content: space-between; margin-top: 1.5rem;">
+                <button id="btn-test-settings" class="btn-secondary">Test Connection</button>
+                <button id="btn-save-settings" class="btn-primary">Save Settings</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Build History Modal -->
+    <div id="modal-history" class="modal-overlay">
+        <div class="modal-dialog">
+            <div class="modal-header">
+                <h3>📁 Generated ISO Builds</h3>
+                <button id="btn-close-history" class="modal-close">&times;</button>
+            </div>
+
+            <div id="history-list">
+                <!-- Build records populated dynamically -->
+            </div>
+        </div>
+    </div>
+
+    <!-- Footer -->
+    <footer>
+        AI-ISO-Creator &copy; 2026 — Integrated AI-Powered Linux Distribution Builder.
+    </footer>
+
+    <script src="/js/app.js"></script>
+</body>
+</html>
