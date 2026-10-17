@@ -473,6 +473,9 @@ public class ContainerBuilderService : IIsoBuilderService
         sb.AppendLine("    apk update");
         sb.AppendLine("    apk add --no-cache xorriso syslinux squashfs-tools dosfstools grub-efi efibootmgr mtools bash shadow curl");
         sb.AppendLine("    echo '[STAGE 2/5] Bootstrapping target rootfs via apk...'");
+        sb.AppendLine("    mkdir -p \"$ROOTFS/etc/apk\"");
+        sb.AppendLine("    cp -R /etc/apk/keys \"$ROOTFS/etc/apk/\" 2>/dev/null || true");
+        sb.AppendLine("    cp /etc/apk/repositories \"$ROOTFS/etc/apk/\" 2>/dev/null || true");
         sb.AppendLine("    apk add --root \"$ROOTFS\" --initdb --repositories-file /etc/apk/repositories \\");
         sb.AppendLine($"        alpine-base alpine-conf linux-lts mkinitfs {packagesStr}");
         sb.AppendLine("fi");
