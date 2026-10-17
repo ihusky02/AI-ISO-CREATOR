@@ -24,7 +24,13 @@ public class ContainerBuilderService : IIsoBuilderService
     public ContainerBuilderService(ILogger<ContainerBuilderService> logger)
     {
         _logger = logger;
-        _buildsRootDirectory = Path.Combine(Directory.GetCurrentDirectory(), "build_artifacts");
+        var applicationDataDirectory = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+        if (string.IsNullOrWhiteSpace(applicationDataDirectory))
+        {
+            applicationDataDirectory = Path.GetTempPath();
+        }
+
+        _buildsRootDirectory = Path.Combine(applicationDataDirectory, "AI-ISO-Creator", "build_artifacts");
         Directory.CreateDirectory(_buildsRootDirectory);
     }
 
@@ -102,8 +108,10 @@ public class ContainerBuilderService : IIsoBuilderService
                 AddLog(job, "warn", "Build operation was cancelled by user.");
                 NotifyJobUpdated(job);
             }
+
             return true;
         }
+
         return false;
     }
 
@@ -123,6 +131,7 @@ public class ContainerBuilderService : IIsoBuilderService
                 _logger.LogWarning(ex, "Failed to delete workspace directory for job {JobId}", jobId);
             }
         }
+
         return removed;
     }
 
@@ -170,7 +179,8 @@ public class ContainerBuilderService : IIsoBuilderService
         ArgumentNullException.ThrowIfNull(sourceIso);
         if (!Path.GetExtension(sourceIsoFileName).Equals(".iso", StringComparison.OrdinalIgnoreCase))
         {
-            throw new ArgumentException("The uploaded source file must have an .iso extension.", nameof(sourceIsoFileName));
+            throw new ArgumentException("The uploaded source file must have an .iso extension.",
+                nameof(sourceIsoFileName));
         }
 
         ValidateRecipe(recipe);
@@ -219,11 +229,25 @@ public class ContainerBuilderService : IIsoBuilderService
 
     private static void ValidateRecipe(IsoRecipe recipe)
     {
-        if (recipe.Packages == null || recipe.Packages.Any(package =>
+        static bool HasInvalidPackageNames(IEnumerable<string>? packages) =>
+            packages == null || packages.Count() > 100 || packages.Any(package =>
                 string.IsNullOrWhiteSpace(package) ||
-                !System.Text.RegularExpressions.Regex.IsMatch(package, @"^[a-zA-Z0-9][a-zA-Z0-9.+-]*$")))
+                !System.Text.RegularExpressions.Regex.IsMatch(package, @"^[a-zA-Z0-9][a-zA-Z0-9.+-]*$"));
+
+        if (HasInvalidPackageNames(recipe.Packages) || HasInvalidPackageNames(recipe.PackagesToRemove))
         {
             throw new ArgumentException("Package names may contain only letters, numbers, '.', '+', and '-'.");
+        }
+
+        if (recipe.Packages.Intersect(recipe.PackagesToRemove, StringComparer.OrdinalIgnoreCase).Any())
+        {
+            throw new ArgumentException("A package cannot be both installed and removed in the same build.");
+        }
+
+        if (recipe.SuggestedCommands is null || recipe.SuggestedCommands.Count > 20 ||
+            recipe.SuggestedCommands.Any(command => string.IsNullOrWhiteSpace(command) || command.Length > 300))
+        {
+            throw new ArgumentException("Suggested commands may contain at most 20 non-empty entries of 300 characters each.");
         }
 
         if (recipe.DesktopEnvironment is not ("none" or "xfce" or "gnome" or "kde" or "i3"))
@@ -264,9 +288,10 @@ public class ContainerBuilderService : IIsoBuilderService
 
             if (OperatingSystem.IsLinux() || OperatingSystem.IsMacOS())
             {
-                File.SetUnixFileMode(scriptPath, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute |
-                                               UnixFileMode.GroupRead | UnixFileMode.GroupExecute |
-                                               UnixFileMode.OtherRead | UnixFileMode.OtherExecute);
+                File.SetUnixFileMode(scriptPath, UnixFileMode.UserRead | UnixFileMode.UserWrite |
+                                                 UnixFileMode.UserExecute |
+                                                 UnixFileMode.GroupRead | UnixFileMode.GroupExecute |
+                                                 UnixFileMode.OtherRead | UnixFileMode.OtherExecute);
             }
 
             job.Status = BuildStatus.InstallingPackages;
@@ -287,7 +312,9 @@ public class ContainerBuilderService : IIsoBuilderService
             if (!File.Exists(resultingIsoPath))
             {
                 var outputDir = Path.Combine(jobWorkDir, "output");
-                var isoFiles = Directory.Exists(outputDir) ? Directory.GetFiles(outputDir, "*.iso") : Array.Empty<string>();
+                var isoFiles = Directory.Exists(outputDir)
+                    ? Directory.GetFiles(outputDir, "*.iso")
+                    : Array.Empty<string>();
                 if (isoFiles.Length > 0)
                 {
                     resultingIsoPath = isoFiles[0];
@@ -392,6 +419,7 @@ public class ContainerBuilderService : IIsoBuilderService
                     {
                         errorLines.TryDequeue(out _);
                     }
+
                     HandleProcessOutputLine(job, e.Data, isError: true);
                 }
             };
@@ -409,7 +437,9 @@ public class ContainerBuilderService : IIsoBuilderService
             if (process.ExitCode != 0)
             {
                 var errorOutput = string.Join(Environment.NewLine, errorLines);
-                var details = string.IsNullOrWhiteSpace(errorOutput) ? string.Empty : $" Last container errors:{Environment.NewLine}{errorOutput}";
+                var details = string.IsNullOrWhiteSpace(errorOutput)
+                    ? string.Empty
+                    : $" Last container errors:{Environment.NewLine}{errorOutput}";
                 return (false, $"Podman container exited with error code {process.ExitCode}.{details}");
             }
 
@@ -507,6 +537,7 @@ public class ContainerBuilderService : IIsoBuilderService
             number /= 1024;
             counter++;
         }
+
         return $"{number:n1} {suffixes[counter]}";
     }
 }

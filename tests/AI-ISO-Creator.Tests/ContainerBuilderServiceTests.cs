@@ -49,14 +49,13 @@ public class ContainerBuilderServiceTests
     }
 
     [Theory]
-    [InlineData("xfce", "xubuntu-desktop-minimal lightdm", "xfce4 lightdm")]
-    [InlineData("gnome", "ubuntu-desktop-minimal", "gnome-core gdm3")]
-    [InlineData("kde", "kubuntu-desktop", "kde-plasma-desktop sddm")]
-    [InlineData("i3", "i3 lightdm", "i3 lightdm")]
+    [InlineData("xfce", "xfce4 lightdm")]
+    [InlineData("gnome", "gnome-shell gdm3")]
+    [InlineData("kde", "plasma-desktop sddm")]
+    [InlineData("i3", "i3 lightdm")]
     public void BuildScript_CustomizesUploadedLiveIsoAndSelectsDistroSpecificDesktopPackages(
         string desktopEnvironment,
-        string ubuntuDesktopPackages,
-        string debianDesktopPackages)
+        string desktopPackages)
     {
         var recipe = new IsoRecipe
         {
@@ -66,17 +65,57 @@ public class ContainerBuilderServiceTests
 
         var script = ContainerBuilderService.GenerateBuildScript(recipe, "test-job");
 
-        Assert.Contains("find \"$ISO_DIR\" -type f -name filesystem.squashfs", script);
-        Assert.Contains("unsquashfs -d \"$ROOTFS\" \"$SQUASHFS\"", script);
-        Assert.Contains("ubuntu|debian", script);
+        Assert.Contains("-name filesystem.squashfs -o -name rootfs.sfs", script);
+        Assert.Contains("unsquashfs -excludes -d \"$SQUASHFS_CONTENTS\" \"$SQUASHFS\" 'dev/*'", script);
+        Assert.Contains("ubuntu|debian|zorin)", script);
+        Assert.Contains("[ \"$DISTRO_ID\" = zorin ]", script);
         Assert.Contains("Unsupported source architecture", script);
-        Assert.Contains("universe multiverse", script);
-        Assert.Contains("contrib non-free non-free-firmware", script);
-        Assert.Contains($"ubuntu:{desktopEnvironment}) DESKTOP_PACKAGES='{ubuntuDesktopPackages}'", script);
-        Assert.Contains($"debian:{desktopEnvironment}) DESKTOP_PACKAGES='{debianDesktopPackages}'", script);
-        Assert.Contains("PACKAGE_LIST=$(printf '%s\\n' \"$DESKTOP_PACKAGES gparted testdisk gddrescue\" | xargs)", script);
+        Assert.Contains("multiverse", script);
+        Assert.Contains("non-free-firmware", script);
+        Assert.Contains($"{desktopEnvironment}) DESKTOP_PACKAGES='{desktopPackages}'", script);
+        Assert.Contains("USER_PACKAGES='gparted testdisk gddrescue'", script);
+        Assert.Contains("PACKAGE_LIST=$(printf '%s\\n' \"$DESKTOP_PACKAGES $USER_PACKAGES\" | xargs)", script);
+        Assert.Contains("REMOVE_PACKAGE_LIST=$(printf '%s\\n' \"$USER_PACKAGES_TO_REMOVE\" | xargs)", script);
+        Assert.Contains("chroot \"$ROOTFS\" /bin/sh -c \"$PACKAGE_MANAGER_REMOVE $REMOVE_PACKAGE_LIST\"", script);
+        Assert.Contains("rm -f \"$ROOTFS/etc/resolv.conf\"\ncp -L /etc/resolv.conf \"$ROOTFS/etc/resolv.conf\"", script);
+        Assert.Contains("RESOLV_CONF_STATE=symlink", script);
+        Assert.Contains("RESOLV_CONF_STATE=file", script);
+        Assert.Contains("Using the build container DNS configuration", script);
         Assert.Contains("-boot_image any replay", script);
         Assert.DoesNotContain("debootstrap", script);
+    }
+
+    [Fact]
+    public void BuildScript_IncludesSeparateModulesForSupportedPackageManagers()
+    {
+        var script = ContainerBuilderService.GenerateBuildScript(new IsoRecipe
+        {
+            Packages = ["build-essential", "ddrescue", "dnsutils"],
+            PackagesToRemove = ["games", "nano"],
+            SuggestedCommands = ["apt-get install vlc"]
+        }, "test-job");
+
+        Assert.Contains("fedora)", script);
+        Assert.Contains("Acquire::AllowInsecureRepositories=true", script);
+        Assert.Contains("Acquire::AllowDowngradeToInsecureRepositories=true", script);
+        Assert.Contains("APT::Get::AllowUnauthenticated=true", script);
+        Assert.Contains("--allow-unauthenticated", script);
+        Assert.Contains("umount -lf \"$ROOTFS/$mountpoint\" 2>/dev/null || true", script);
+        Assert.Contains("PACKAGE_MANAGER_UPDATE='dnf makecache --refresh'", script);
+        Assert.Contains("arch|archlinux)", script);
+        Assert.Contains("PACKAGE_MANAGER_UPDATE='pacman -Syu --noconfirm'", script);
+        Assert.Contains("opensuse|opensuse-leap|opensuse-tumbleweed)", script);
+        Assert.Contains("PACKAGE_MANAGER_UPDATE='zypper --non-interactive refresh'", script);
+        Assert.Contains("PACKAGE_MANAGER_REMOVE='apt-get remove -y --purge'", script);
+        Assert.Contains("PACKAGE_MANAGER_REMOVE='dnf remove -y'", script);
+        Assert.Contains("PACKAGE_MANAGER_REMOVE='pacman -Rns --noconfirm'", script);
+        Assert.Contains("PACKAGE_MANAGER_REMOVE='zypper --non-interactive remove -y'", script);
+        Assert.Contains("USER_PACKAGES_TO_REMOVE='games nano'", script);
+        Assert.DoesNotContain("apt-get install vlc", script);
+        Assert.Contains("USER_PACKAGES='@development-tools ddrescue bind-utils'", script);
+        Assert.Contains("USER_PACKAGES='base-devel gnu-ddrescue bind'", script);
+        Assert.Contains("USER_PACKAGES='patterns-devel-base-devel_basis ddrescue bind-utils'", script);
+        Assert.Contains("-name rootfs.img -o -name ext3fs.img", script);
     }
 
     [Fact]

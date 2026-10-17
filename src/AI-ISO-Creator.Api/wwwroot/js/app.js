@@ -98,17 +98,27 @@ function setupEventListeners() {
             addPackageFromInput();
         }
     });
+    document.getElementById('btn-add-remove-pkg').addEventListener('click', addPackageToRemoveFromInput);
+    document.getElementById('remove-pkg-input').addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+            e.preventDefault();
+            addPackageToRemoveFromInput();
+        }
+    });
 
     // Refine recipe via conversational AI
     document.getElementById('btn-refine').addEventListener('click', refineRecipe);
 
     // Start build process
     document.getElementById('btn-start-build').addEventListener('click', startBuild);
+    document.getElementById('btn-choose-source-iso').addEventListener('click', () => {
+        document.getElementById('source-iso').click();
+    });
     document.getElementById('source-iso').addEventListener('change', (event) => {
         const file = event.target.files[0];
         document.getElementById('source-iso-name').textContent = file
             ? `${file.name} (${formatBytes(file.size)})`
-            : '';
+            : 'No ISO file selected.';
     });
 
     // Cancel active build
@@ -143,14 +153,14 @@ async function generateRecipe() {
     const prompt = promptInput.value.trim();
 
     if (!prompt) {
-        alert('Please enter a prompt describing the Linux system you want to build.');
+        alert('Describe the packages or tools you want to add or remove.');
         promptInput.focus();
         return;
     }
 
     const btn = document.getElementById('btn-generate-recipe');
     btn.disabled = true;
-    btn.innerHTML = `<span class="spinner"></span> Gemini AI is architecting your system...`;
+    btn.innerHTML = `<span class="spinner"></span> Gemini is preparing package suggestions...`;
 
     try {
         const res = await fetch('/api/ai/generate', {
@@ -161,7 +171,7 @@ async function generateRecipe() {
 
         if (!res.ok) {
             const err = await res.json();
-            throw new Error(err.detail || err.error || 'Generation failed');
+            throw new Error(err.detail || err.error || 'Package research failed');
         }
 
         currentRecipe = await res.json();
@@ -174,7 +184,7 @@ async function generateRecipe() {
         alert('Recipe generation error: ' + err.message);
     } finally {
         btn.disabled = false;
-        btn.innerHTML = `<span>✨ Generate Recipe with Gemini AI</span>`;
+        btn.innerHTML = `<span>✨ Suggest Package Plan with Gemini</span>`;
     }
 }
 
@@ -223,11 +233,17 @@ async function refineRecipe() {
 
 // 6. Populate form with recipe values
 function renderRecipe(recipe) {
+    recipe.packages = recipe.packages || [];
+    recipe.packagesToRemove = recipe.packagesToRemove || [];
+    recipe.suggestedCommands = recipe.suggestedCommands || [];
     document.getElementById('recipe-summary').textContent = recipe.summary || 'No rationale available.';
     document.getElementById('field-isolabel').value = recipe.isoLabel || 'AI_LINUX';
     document.getElementById('field-desktop').value = recipe.desktopEnvironment || 'none';
 
     renderPackagesTags(recipe.packages || []);
+    renderPackagesToRemoveTags(recipe.packagesToRemove || []);
+    document.getElementById('suggested-commands').textContent =
+        (recipe.suggestedCommands || []).join('\n') || 'No command suggestions.';
 }
 
 function renderPackagesTags(packages) {
@@ -249,13 +265,49 @@ function renderPackagesTags(packages) {
     });
 }
 
+function renderPackagesToRemoveTags(packages) {
+    const container = document.getElementById('packages-remove-tags-container');
+    container.innerHTML = '';
+
+    packages.forEach((pkg, index) => {
+        const pill = document.createElement('span');
+        pill.className = 'tag-pill';
+        pill.innerHTML = `${escapeHtml(pkg)} <span class="tag-remove" title="Keep package">&times;</span>`;
+        pill.querySelector('.tag-remove').addEventListener('click', () => {
+            currentRecipe.packagesToRemove.splice(index, 1);
+            renderPackagesToRemoveTags(currentRecipe.packagesToRemove);
+        });
+        container.appendChild(pill);
+    });
+}
+
 function addPackageFromInput() {
     const input = document.getElementById('new-pkg-input');
     const val = input.value.trim().toLowerCase();
     if (val && currentRecipe) {
+        if (currentRecipe.packagesToRemove.some(pkg => pkg.toLowerCase() === val)) {
+            alert('A package cannot be both installed and removed.');
+            return;
+        }
         if (!currentRecipe.packages.includes(val)) {
             currentRecipe.packages.push(val);
             renderPackagesTags(currentRecipe.packages);
+        }
+        input.value = '';
+    }
+}
+
+function addPackageToRemoveFromInput() {
+    const input = document.getElementById('remove-pkg-input');
+    const val = input.value.trim().toLowerCase();
+    if (val && currentRecipe) {
+        if (currentRecipe.packages.some(pkg => pkg.toLowerCase() === val)) {
+            alert('A package cannot be both installed and removed.');
+            return;
+        }
+        if (!currentRecipe.packagesToRemove.includes(val)) {
+            currentRecipe.packagesToRemove.push(val);
+            renderPackagesToRemoveTags(currentRecipe.packagesToRemove);
         }
         input.value = '';
     }
@@ -273,7 +325,7 @@ async function startBuild() {
     updateRecipeFromForm();
     const sourceIso = document.getElementById('source-iso').files[0];
     if (!sourceIso) {
-        alert('Choose a Debian or Ubuntu live ISO file first.');
+        alert('Choose a supported Linux live ISO file first.');
         document.getElementById('source-iso').focus();
         return;
     }

@@ -30,17 +30,18 @@ builder.Services.AddTransient<IGeminiAiService>(sp =>
 
 builder.Services.AddCors(options =>
 {
-    options.AddDefaultPolicy(policy =>
-    {
-        policy.AllowAnyOrigin().AllowAnyHeader().AllowAnyMethod();
-    });
+    options.AddDefaultPolicy(policy => { policy.AllowAnyOrigin().AllowAnyHeader().AllowAnyMethod(); });
 });
 
 var app = builder.Build();
 
 app.UseCors();
 app.UseDefaultFiles();
-app.UseStaticFiles();
+app.UseStaticFiles(new StaticFileOptions
+{
+    OnPrepareResponse = context =>
+        context.Context.Response.Headers.CacheControl = "no-cache, must-revalidate"
+});
 
 // System health and runtime status endpoint
 app.MapGet("/api/status", (AppSettingsService settingsSvc, IIsoBuilderService builderSvc) =>
@@ -59,8 +60,8 @@ app.MapGet("/api/status", (AppSettingsService settingsSvc, IIsoBuilderService bu
 app.MapGet("/api/config", (AppSettingsService settingsSvc) =>
 {
     var cfg = settingsSvc.GetSettings();
-    var maskedKey = string.IsNullOrWhiteSpace(cfg.ApiKey) 
-        ? "" 
+    var maskedKey = string.IsNullOrWhiteSpace(cfg.ApiKey)
+        ? ""
         : (cfg.ApiKey.Length > 8 ? cfg.ApiKey[..4] + "..." + cfg.ApiKey[^4..] : "********");
 
     return Results.Ok(new
@@ -92,17 +93,14 @@ app.MapPost("/api/config/test", async (IGeminiAiService aiService, [FromBody] Te
     return Results.Ok(new
     {
         success,
-        message = success 
-            ? "Connection to Gemini API succeeded!" 
+        message = success
+            ? "Connection to Gemini API succeeded!"
             : "Failed to connect to Gemini API. Verify your API key or network connection."
     });
 });
 
 // Gemini AI generation and refinement endpoints
-app.MapGet("/api/ai/presets", (IGeminiAiService aiService) =>
-{
-    return Results.Ok(aiService.GetPresetPrompts());
-});
+app.MapGet("/api/ai/presets", (IGeminiAiService aiService) => { return Results.Ok(aiService.GetPresetPrompts()); });
 
 app.MapPost("/api/ai/generate", async (IGeminiAiService aiService, [FromBody] GenerateRecipeRequest request) =>
 {
@@ -159,7 +157,8 @@ app.MapPost("/api/build", async (HttpRequest request, IIsoBuilderService builder
 
         if (sourceIso.Length > MaxSourceIsoSizeBytes)
         {
-            return Results.BadRequest(new { error = $"The ISO exceeds the maximum size of {MaxSourceIsoSizeBytes / (1024 * 1024 * 1024)} GiB." });
+            return Results.BadRequest(new
+                { error = $"The ISO exceeds the maximum size of {MaxSourceIsoSizeBytes / (1024 * 1024 * 1024)} GiB." });
         }
 
         if (!Path.GetExtension(sourceIso.FileName).Equals(".iso", StringComparison.OrdinalIgnoreCase))
@@ -220,10 +219,7 @@ app.MapPost("/api/build", async (HttpRequest request, IIsoBuilderService builder
     }
 });
 
-app.MapGet("/api/builds", (IIsoBuilderService builderSvc) =>
-{
-    return Results.Ok(builderSvc.GetAllJobs());
-});
+app.MapGet("/api/builds", (IIsoBuilderService builderSvc) => { return Results.Ok(builderSvc.GetAllJobs()); });
 
 app.MapGet("/api/build/{id}", (IIsoBuilderService builderSvc, string id) =>
 {
@@ -238,89 +234,92 @@ app.MapGet("/api/build/{id}/logs", (IIsoBuilderService builderSvc, string id) =>
 });
 
 // Real-time log and progress streaming via Server-Sent Events (SSE)
-app.MapGet("/api/build/{id}/stream", async (HttpContext ctx, IIsoBuilderService builderSvc, string id, CancellationToken ct) =>
-{
-    var job = builderSvc.GetJob(id);
-    if (job == null)
+app.MapGet("/api/build/{id}/stream",
+    async (HttpContext ctx, IIsoBuilderService builderSvc, string id, CancellationToken ct) =>
     {
-        ctx.Response.StatusCode = 404;
-        return;
-    }
-
-    ctx.Response.Headers.Append("Content-Type", "text/event-stream");
-    ctx.Response.Headers.Append("Cache-Control", "no-cache");
-    ctx.Response.Headers.Append("Connection", "keep-alive");
-
-    var channel = System.Threading.Channels.Channel.CreateUnbounded<string>();
-
-    void OnLog(string jId, BuildLogEntry log)
-    {
-        if (jId == id)
+        var job = builderSvc.GetJob(id);
+        if (job == null)
         {
-            var json = JsonSerializer.Serialize(new { type = "log", data = log });
-            channel.Writer.TryWrite(json);
+            ctx.Response.StatusCode = 404;
+            return;
         }
-    }
 
-    void OnUpdate(string jId, BuildJob updatedJob)
-    {
-        if (jId == id)
+        ctx.Response.Headers.Append("Content-Type", "text/event-stream");
+        ctx.Response.Headers.Append("Cache-Control", "no-cache");
+        ctx.Response.Headers.Append("Connection", "keep-alive");
+
+        var channel = System.Threading.Channels.Channel.CreateUnbounded<string>();
+
+        void OnLog(string jId, BuildLogEntry log)
         {
-            var json = JsonSerializer.Serialize(new
+            if (jId == id)
+            {
+                var json = JsonSerializer.Serialize(new { type = "log", data = log });
+                channel.Writer.TryWrite(json);
+            }
+        }
+
+        void OnUpdate(string jId, BuildJob updatedJob)
+        {
+            if (jId == id)
+            {
+                var json = JsonSerializer.Serialize(new
+                {
+                    type = "job",
+                    data = new
+                    {
+                        status = updatedJob.Status.ToString(),
+                        statusMessage = updatedJob.StatusMessage,
+                        progress = updatedJob.ProgressPercent,
+                        outputFileName = updatedJob.OutputIsoFileName,
+                        outputSize = updatedJob.OutputIsoSize,
+                        sha256 = updatedJob.OutputIsoSha256,
+                        finishedAt = updatedJob.FinishedAt
+                    }
+                });
+                channel.Writer.TryWrite(json);
+            }
+        }
+
+        builderSvc.OnLogReceived += OnLog;
+        builderSvc.OnJobUpdated += OnUpdate;
+
+        try
+        {
+            // Push initial state
+            var initialJson = JsonSerializer.Serialize(new
             {
                 type = "job",
                 data = new
                 {
-                    status = updatedJob.Status.ToString(),
-                    statusMessage = updatedJob.StatusMessage,
-                    progress = updatedJob.ProgressPercent,
-                    outputFileName = updatedJob.OutputIsoFileName,
-                    outputSize = updatedJob.OutputIsoSize,
-                    sha256 = updatedJob.OutputIsoSha256,
-                    finishedAt = updatedJob.FinishedAt
+                    status = job.Status.ToString(),
+                    statusMessage = job.StatusMessage,
+                    progress = job.ProgressPercent,
+                    outputFileName = job.OutputIsoFileName,
+                    outputSize = job.OutputIsoSize,
+                    sha256 = job.OutputIsoSha256,
+                    finishedAt = job.FinishedAt
                 }
             });
-            channel.Writer.TryWrite(json);
-        }
-    }
-
-    builderSvc.OnLogReceived += OnLog;
-    builderSvc.OnJobUpdated += OnUpdate;
-
-    try
-    {
-        // Push initial state
-        var initialJson = JsonSerializer.Serialize(new
-        {
-            type = "job",
-            data = new
-            {
-                status = job.Status.ToString(),
-                statusMessage = job.StatusMessage,
-                progress = job.ProgressPercent,
-                outputFileName = job.OutputIsoFileName,
-                outputSize = job.OutputIsoSize,
-                sha256 = job.OutputIsoSha256,
-                finishedAt = job.FinishedAt
-            }
-        });
-        await ctx.Response.WriteAsync($"data: {initialJson}\n\n", ct);
-        await ctx.Response.Body.FlushAsync(ct);
-
-        while (!ct.IsCancellationRequested)
-        {
-            var item = await channel.Reader.ReadAsync(ct);
-            await ctx.Response.WriteAsync($"data: {item}\n\n", ct);
+            await ctx.Response.WriteAsync($"data: {initialJson}\n\n", ct);
             await ctx.Response.Body.FlushAsync(ct);
+
+            while (!ct.IsCancellationRequested)
+            {
+                var item = await channel.Reader.ReadAsync(ct);
+                await ctx.Response.WriteAsync($"data: {item}\n\n", ct);
+                await ctx.Response.Body.FlushAsync(ct);
+            }
         }
-    }
-    catch (OperationCanceledException) { }
-    finally
-    {
-        builderSvc.OnLogReceived -= OnLog;
-        builderSvc.OnJobUpdated -= OnUpdate;
-    }
-});
+        catch (OperationCanceledException)
+        {
+        }
+        finally
+        {
+            builderSvc.OnLogReceived -= OnLog;
+            builderSvc.OnJobUpdated -= OnUpdate;
+        }
+    });
 
 // Download ISO artifact
 app.MapGet("/api/build/{id}/download", (IIsoBuilderService builderSvc, string id) =>
@@ -356,8 +355,8 @@ app.MapPost("/api/build/{id}/test-qemu", async (IIsoBuilderService builderSvc, s
     return Results.Ok(new
     {
         success,
-        message = success 
-            ? "Successfully started QEMU virtual machine with the ISO image!" 
+        message = success
+            ? "Successfully started QEMU virtual machine with the ISO image!"
             : "Failed to launch QEMU. Ensure the build has completed and QEMU is installed on the host."
     });
 });
@@ -379,13 +378,19 @@ _ = Task.Run(async () =>
             });
         }
     }
-    catch { /* Ignore browser open failures */ }
+    catch
+    {
+        /* Ignore browser open failures */
+    }
 });
 
 app.Run();
 
 // Request DTO records
 public record UpdateConfigRequest(string? ApiKey, string? Model);
+
 public record TestConfigRequest(string? ApiKey, string? Model);
+
 public record GenerateRecipeRequest(string Prompt, string? Model);
+
 public record RefineRecipeRequest(IsoRecipe CurrentRecipe, string RefinementPrompt, string? Model);

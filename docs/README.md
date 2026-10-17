@@ -1,8 +1,11 @@
-# Dokumentacja Techniczna AI-ISO-Creator
+# Dokumentacja techniczna AI-ISO-Creator
 
-Witaj w oficjalnej dokumentacji technicznej projektu **AI-ISO-Creator** – nowoczesnej, modułowej aplikacji desktopowo-webowej zintegrowanej z Gemini AI do generowania niestandardowych obrazów ISO systemu Linux za pomocą promptów w języku naturalnym.
+AI-ISO-Creator służy do personalizacji istniejących obrazów Linux Live ISO. Użytkownik dostarcza obraz źródłowy, wybiera środowisko graficzne i zatwierdza plan zmian. Gemini może zasugerować pakiety do dodania lub usunięcia oraz pomocnicze komendy, ale nie wybiera dystrybucji ani pulpitu, a jego komendy nie są wykonywane.
 
-## Spis treści
-1. [Architektura Systemu](./architecture.md)
+## Dokumenty
+
+1. [Architektura systemu](./architecture.md)
 2. [Integracja z Gemini AI](./ai-integration.md)
-3. [Silnik Budowy ISO i Konteneryzacja Podman](./iso-builder.md)
+3. [Silnik personalizacji ISO i moduły dystrybucji](./iso-builder.md)
+
+Dokumentacja po angielsku znajduje się w katalogu [`en/`](./en/README.md).

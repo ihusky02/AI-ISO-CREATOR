@@ -42,25 +42,35 @@
         
         <!-- Hero Introduction -->
         <section class="hero">
-            <h1>Build Tailored Linux Systems Using AI Prompts</h1>
-            <p>Upload a Debian or Ubuntu live ISO, choose a desktop and tools, then build a customized bootable ISO while preserving the source image's boot setup.</p>
+            <h1>Customize Your Linux Live ISO</h1>
+            <p>Gemini suggests package changes and useful commands. Distribution-specific chroot modules apply the package plan to your uploaded ISO in an isolated build container.</p>
         </section>
 
         <!-- STEP 1: Gemini AI Prompt Assistant -->
         <section id="step-prompt" class="card">
             <div class="section-header">
                 <div class="section-title">
-                    <span>💡 Step 1: Provide System Prompt for Gemini AI</span>
+                    <span>💡 Step 1: Describe the packages and tools you need</span>
                 </div>
             </div>
 
+            <div class="form-group source-iso-picker">
+                <label for="source-iso">Source Linux live ISO:</label>
+                <div class="source-iso-picker-controls">
+                    <input id="source-iso" type="file" accept=".iso,application/x-iso9660-image" aria-hidden="true" tabindex="-1">
+                    <button id="btn-choose-source-iso" type="button" class="btn-secondary">📂 Choose ISO file</button>
+                    <span id="source-iso-name" class="field-help" aria-live="polite">No ISO file selected.</span>
+                </div>
+                <small class="field-help">Supported: Ubuntu, Debian, Zorin OS, Fedora, Arch Linux, and openSUSE x86_64 live ISOs. Maximum upload size: 16 GiB.</small>
+            </div>
+
             <div class="prompt-area">
-                <textarea id="user-prompt" class="prompt-textarea" placeholder="E.g.: Create an ultralightweight rescue disk with tools for SSD/HDD diagnostics, partition recovery, RAM testing, and network utilities..."></textarea>
+                <textarea id="user-prompt" class="prompt-textarea" placeholder="E.g.: Add SSD/HDD diagnostics, partition recovery, RAM testing, and network utilities; remove office apps..."></textarea>
 
                 <div class="prompt-actions">
                     <button id="btn-clear-prompt" class="btn-secondary">Clear</button>
                     <button id="btn-generate-recipe" class="btn-primary">
-                        <span>✨ Generate Recipe with Gemini AI</span>
+                        <span>✨ Suggest Package Plan with Gemini</span>
                     </button>
                 </div>
             </div>
@@ -86,18 +96,12 @@
             <!-- AI Architectural Rationale -->
             <div class="ai-summary-box">
                 <strong style="color: #60a5fa; display: block; margin-bottom: 0.3rem;">🧠 Build plan:</strong>
-                <span id="recipe-summary">Choose your live ISO, desktop environment, and additional packages. The uploaded image must be a Debian or Ubuntu x86_64 live ISO containing filesystem.squashfs.</span>
+                <span id="recipe-summary">Choose your live ISO, desktop environment, and additional packages. Supported images must contain a recognized live SquashFS filesystem and use x86_64.</span>
             </div>
 
             <div class="recipe-section">
                 <!-- Left Column: Base parameters -->
                 <div>
-                    <div class="form-group">
-                        <label for="source-iso">Source Linux live ISO:</label>
-                        <input id="source-iso" type="file" class="form-control" accept=".iso,application/x-iso9660-image" required>
-                        <small class="field-help">Supported: Debian/Ubuntu x86_64 live ISOs with filesystem.squashfs. Maximum upload size: 16 GiB.</small>
-                        <div id="source-iso-name" class="field-help"></div>
-                    </div>
                     <div class="form-group">
                         <label>Source distribution:</label>
                         <div class="form-control">Detected from the uploaded ISO</div>
@@ -111,7 +115,7 @@
 
                     <div class="form-row">
                         <div class="form-group">
-                            <label>Desktop Environment:</label>
+                            <label>Desktop Environment (choose manually):</label>
                             <select id="field-desktop" class="form-control">
                                 <option value="none">Keep source desktop unchanged</option>
                                 <option value="xfce">XFCE (lightweight)</option>
@@ -119,6 +123,7 @@
                                 <option value="kde">KDE Plasma</option>
                                 <option value="i3">i3 window manager</option>
                             </select>
+                            <small class="field-help">Gemini only proposes package changes and command examples; it does not choose the desktop.</small>
                         </div>
                     </div>
                 </div>
@@ -126,14 +131,30 @@
                 <!-- Right Column: Packages & Conversational Refinement -->
                 <div>
                     <div class="form-group">
-                        <label>Additional APT packages to install:</label>
+                        <label>Packages to install:</label>
                         <div id="packages-tags-container" class="packages-box">
-                            <!-- Package pills rendered dynamically -->
+                            <!-- Install package pills rendered dynamically -->
                         </div>
                         <div class="tag-input-group">
                             <input id="new-pkg-input" type="text" class="form-control" placeholder="e.g. gparted, testdisk, htop">
                             <button id="btn-add-pkg" class="btn-secondary">Add</button>
                         </div>
+                    </div>
+
+                    <div class="form-group">
+                        <label>Packages to remove:</label>
+                        <div id="packages-remove-tags-container" class="packages-box">
+                            <!-- Removal package pills rendered dynamically -->
+                        </div>
+                        <div class="tag-input-group">
+                            <input id="remove-pkg-input" type="text" class="form-control" placeholder="e.g. libreoffice, games">
+                            <button id="btn-add-remove-pkg" class="btn-secondary">Add removal</button>
+                        </div>
+                    </div>
+
+                    <div class="form-group">
+                        <label>AI command suggestions (not executed automatically):</label>
+                        <pre id="suggested-commands" class="command-suggestions">No command suggestions.</pre>
                     </div>
 
                     <!-- AI Conversational Refinement -->

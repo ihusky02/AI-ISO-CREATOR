@@ -1,18 +1,40 @@
-# Architektura Systemu AI-ISO-Creator
+# Architektura systemu AI-ISO-Creator
 
 ## Przegląd
-Aplikacja została zaprojektowana w oparciu o czystą architekturę modułową (Modular Monolith) w języku C# (.NET 8/10), łączącą backend API, silnik przetwarzania AI oraz lekki interfejs graficzny typu Web-Desktop.
 
-## Struktura Modułów
-- **AI-ISO-Creator.Core**: Biblioteka rdzenna zawierająca modele danych (prompty, receptury, statusy), usługi komunikacji z Gemini AI oraz orkiestrator budowania ISO.
-- **AI-ISO-Creator.Api**: Serwer ASP.NET Core Minimal API udostępniający endpointy REST dla interfejsu użytkownika oraz przesyłania strumieniowego logów przez WebSockets / Server-Sent Events.
-- **AI-ISO-Creator.Frontend**: Statyczny interfejs użytkownika (HTML5, Bootstrap 5, Modern CSS, JavaScript) osadzony i serwowany przez API, uruchamiany w dedykowanym okienku przeglądarki (`google-chrome --app`).
-- **AI-ISO-Creator.Tests**: Testy jednostkowe i integracyjne weryfikujące poprawność parsowania receptur AI oraz logikę budowania.
+Aplikacja w .NET 8 składa się z API, logiki domenowej, modułów personalizacji przesłanych obrazów Live ISO i statycznego interfejsu webowego. Podman izoluje zadanie budowania od hosta; właściwe zmiany systemu są wykonywane w chroot utworzonym z systemu plików obrazu użytkownika.
 
-## Przepływ Danych (Data Flow)
-1. Użytkownik wpisuje prompt w GUI.
-2. API przekazuje prompt do `GeminiAiService`.
-3. Gemini zwraca ustrukturyzowaną recepturę JSON (pakiety, skrypty konfiguracyjne).
-4. Receptura trafia do edytora w GUI do wglądu/modyfikacji.
-5. Po zatwierdzeniu, `ContainerBuilderService` uruchamia rootless kontener Podman, który wykonuje bootstrap systemu, instalację pakietów, kompresję SquashFS oraz generowanie obrazu ISO przez `genisoimage`/`xorriso`.
-6. Logi budowania są strumieniowane w czasie rzeczywistym do konsoli w GUI.
+## Projekty
+
+- **AI-ISO-Creator.Core** — modele (`IsoRecipe`, `BuildJob`), `GeminiAiService`, `ContainerBuilderService`, generator skryptu oraz moduły dystrybucji.
+- **AI-ISO-Creator.Api** — ASP.NET Core Minimal API, obsługa przesyłania ISO, statusów i logów budowania oraz serwowanie interfejsu z `wwwroot`.
+- **Frontend (`wwwroot`)** — HTML, CSS i JavaScript: wybór pliku ISO, edycja receptury, wybór pulpitu i prezentacja logów.
+- **AI-ISO-Creator.Tests** — testy logiki receptur, walidacji i generowania skryptów.
+
+## Przepływ danych
+
+1. Użytkownik wybiera obsługiwane Linux Live ISO oraz opisuje potrzebne pakiety.
+2. `GeminiAiService` zwraca listy pakietów do instalacji i usunięcia oraz opcjonalne, tekstowe sugestie komend. Bez skonfigurowanego klucza API używany jest lokalny fallback.
+3. Użytkownik sprawdza i edytuje plan, wybiera pulpit i etykietę ISO.
+4. `ContainerBuilderService` uruchamia kontener Podman i umieszcza źródłowy obraz w osobnym katalogu zadania.
+5. Skrypt wyodrębnia pliki ISO oraz SquashFS, rozpoznaje dystrybucję z `/etc/os-release` i wybiera jej moduł. Moduł włącza lub konfiguruje repozytoria, ustawia natywne komendy menedżera pakietów i mapuje wybrany pulpit.
+6. Pakiety są usuwane, a następnie instalowane w chrootie. Gemini nie dostarcza ani nie uruchamia tych komend; tekstowe sugestie są wyłącznie informacyjne.
+7. Zmodyfikowany system plików jest ponownie pakowany do SquashFS, a ISO tworzone jest z zachowaniem metadanych rozruchowych obrazu źródłowego.
+8. Logi i postęp są udostępniane przez API, a gotowy obraz można pobrać.
+
+## Moduły dystrybucji
+
+Moduły w `AI-ISO-Creator.Core/Services/UploadedIsoModules/` obsługują rodziny:
+
+| Moduł | Identyfikatory dystrybucji | Menedżer |
+|---|---|---|
+| Debian/Ubuntu | `ubuntu`, `debian`, `zorin` | APT |
+| Fedora | `fedora` | DNF |
+| Arch | `arch`, `archlinux` | pacman |
+| openSUSE | `opensuse`, `opensuse-leap`, `opensuse-tumbleweed` | zypper |
+
+Każdy moduł określa konfigurację repozytoriów, komendy aktualizacji/instalacji/usuwania, mapowania nazw pakietów i dostępne pulpity. Wybór odbywa się na podstawie wykrytego identyfikatora systemu źródłowego, a nie deklaracji Gemini.
+
+## Granice i założenia
+
+To nie jest generator czystego rootfs ani instalator dystrybucji: podstawą jest ISO przesłane przez użytkownika. Obraz musi być x86_64 Live ISO z obsługiwanym układem SquashFS i dystrybucją rozpoznawaną przez moduły. Szczegóły formatów i ograniczeń znajdują się w [opisie silnika budowania](./iso-builder.md).

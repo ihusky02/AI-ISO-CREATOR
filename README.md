@@ -1,14 +1,14 @@
 # AI-ISO-Creator 💿🤖
 
-Nowoczesna aplikacja zintegrowana z **Google Gemini AI**, która przyjmuje istniejący obraz Ubuntu lub Debian Live ISO, doinstalowuje wybrane środowisko graficzne i aplikacje, a następnie odtwarza bootowalny obraz ISO.
+Nowoczesna aplikacja do personalizacji dostarczonego przez użytkownika Linux Live ISO. Gemini podpowiada pakiety i przykładowe komendy, a osobne moduły dystrybucji wykonują zweryfikowane zmiany w jednorazowym, izolowanym chroot.
 
 ---
 
 ## ✨ Kluczowe Funkcjonalności
 
 1. **Generowanie Receptur przez Gemini AI**:
-   - Inteligentne tłumaczenie promptu na ustrukturyzowaną recepturę personalizacji (`IsoRecipe`).
-   - Użytkownik dostarcza bazowy obraz Ubuntu/Debian Live ISO; aplikacja włącza repozytoria, instaluje XFCE, GNOME, KDE, i3 i wybrane pakiety oraz zachowuje metadane rozruchowe obrazu.
+   - Gemini pełni rolę asystenta pakietów: proponuje nazwy pakietów do instalacji/usunięcia oraz przykładowe komendy do ręcznego użycia. Wybór środowiska graficznego i parametry ISO ustawia użytkownik.
+   - Użytkownik dostarcza bazowy obraz Ubuntu, Debian, Zorin OS, Fedora, Arch Linux lub openSUSE Live ISO; dedykowany moduł dystrybucji konfiguruje repozytoria i natywny menedżer pakietów, instaluje XFCE, GNOME, KDE, i3 i wybrane aplikacje oraz zachowuje metadane rozruchowe obrazu.
    - Tryb **Refinement** (doprecyzowywanie receptury): możliwość konwersacyjnego dopracowania systemu z AI (np. *"Dodaj Wi-Fi i usuń edytor tekstu"*).
    - Tryb **Offline Fallback**: aplikacja posiada wbudowane algorytmy szablonów, działające nawet bez natychmiastowo podanego klucza API.
 
@@ -19,12 +19,17 @@ Nowoczesna aplikacja zintegrowana z **Google Gemini AI**, która przyjmuje istni
    - Wbudowane gotowe presety promptów uruchamiane jednym kliknięciem.
 
 3. **Wielozadaniowy Silnik Budowy ISO (Podman Rootless)**:
-   - Bezpieczna i izolowana kompilacja systemu w kontenerach bez uprawnień administratora (`podman`).
+   - Każdy build działa w jednorazowym kontenerze Podmana; wewnątrz niego tworzony jest chroot z systemu plików przesłanego ISO.
+   - Osobny moduł Ubuntu/Debian/Zorin, Fedora, Arch i openSUSE konfiguruje repozytoria oraz natywne komendy instalacji i usuwania pakietów.
    - Strumieniowanie logów konsoli budowania w czasie rzeczywistym przez **Server-Sent Events (SSE)**.
    - Pasek postępu z podziałem na etapy (narzędzia -> rozpakowanie źródła -> repozytoria i pakiety -> SquashFS -> ISO).
    - Odtworzenie informacji rozruchowych BIOS/UEFI z obrazu źródłowego.
 
-**Obsługiwane źródła:** x86_64 Ubuntu lub Debian Live ISO zawierające `filesystem.squashfs`. Obrazy Fedora, Arch, Alpine, instalacyjne/server ISO i inne architektury nie są obsługiwane. Limit przesyłania wynosi 16 GiB. Wymagane jest połączenie sieciowe z repozytoriami podczas budowania.
+**Obsługiwane źródła:** x86_64 Live ISO Ubuntu, Debian, Zorin OS, Fedora, Arch Linux i openSUSE zawierające `filesystem.squashfs`, `rootfs.sfs`, `airootfs.sfs` albo obsługiwany obraz `LiveOS/squashfs.img` z `rootfs.img`/`ext3fs.img`. Podczas wypakowywania pomijane są statyczne wpisy `/dev`, których rootless Podman nie może utworzyć; środowisko Live odtwarza je przy starcie. Inne układy ISO, obrazy instalacyjne/server, Alpine i inne architektury nie są obsługiwane. Nazwy pakietów są zależne od repozytoriów wybranej dystrybucji; popularne aliasy są mapowane przez moduły. Limit przesyłania wynosi 16 GiB. Wymagane jest połączenie sieciowe z repozytoriami podczas budowania.
+
+**Uwaga dotycząca APT:** moduł Ubuntu/Debian/Zorin dopuszcza niezaufane repozytoria i pakiety APT, aby umożliwić budowanie obrazów Live pozbawionych `gpgv` lub korzystających z repozytoriów bez poprawnej sygnatury. Wyłącza to weryfikację autentyczności źródeł APT podczas kompilacji; używaj wyłącznie zaufanych sieci i repozytoriów.
+
+Komendy zwracane przez Gemini są wyłącznie podpowiedziami i nie są wykonywane. Build uruchamia jedynie operacje pakietowe z modułu rozpoznanej dystrybucji, po walidacji nazw pakietów.
 
 4. **Weryfikacja i Testowanie Jednym Kliknięciem**:
    - Automatyczne wyliczanie sumy kontrolnej SHA256 oraz rozmiaru pliku.
@@ -80,7 +85,7 @@ dotnet test
 
 - **`src/AI-ISO-Creator.Core/`**:
   - `Models/`: Modele `IsoRecipe`, `BuildJob`, `BuildLogEntry`.
-  - `Services/`: `GeminiAiService` (obsługa Gemini REST API i fallbacków), `ContainerBuilderService` (silnik Podmana, SquashFS, xorriso i integracja QEMU).
+  - `Services/`: `GeminiAiService` (obsługa Gemini REST API i fallbacków), `ContainerBuilderService` (silnik Podmana i QEMU), `UploadedIsoBuildScript` oraz `UploadedIsoModules/` (osobne moduły APT, DNF, pacman i zypper).
   - `Configuration/`: Ustawienia modeli i kluczy Gemini.
 - **`src/AI-ISO-Creator.Api/`**:
   - `Program.cs`: Endpointy Minimal API, obsługa SSE oraz serwowanie aplikacji.

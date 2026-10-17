@@ -7,14 +7,14 @@ namespace AI_ISO_Creator.Core.Models;
 public class IsoRecipe
 {
     /// <summary>
-    /// The target Linux distribution (e.g., "alpine" or "debian").
+    /// The distribution expected by the build recipe; the uploaded ISO remains the build base.
     /// </summary>
-    public string Distribution { get; set; } = "alpine";
+    public string Distribution { get; set; } = "ubuntu";
 
     /// <summary>
-    /// The release or version identifier (e.g., "3.20" for Alpine, "bookworm" for Debian).
+    /// The source release, detected from the uploaded ISO when building.
     /// </summary>
-    public string Release { get; set; } = "3.20";
+    public string Release { get; set; } = "detected";
 
     /// <summary>
     /// Target CPU architecture (typically "x86_64").
@@ -60,6 +60,16 @@ public class IsoRecipe
     /// List of packages to install via the distribution's package manager.
     /// </summary>
     public List<string> Packages { get; set; } = new();
+
+    /// <summary>
+    /// List of packages to remove from the source live system.
+    /// </summary>
+    public List<string> PackagesToRemove { get; set; } = new();
+
+    /// <summary>
+    /// Human-readable command suggestions; these are shown to the user and never executed.
+    /// </summary>
+    public List<string> SuggestedCommands { get; set; } = new();
 
     /// <summary>
     /// System services to enable during boot (e.g., "sshd", "networking").
