@@ -43,7 +43,7 @@
         <!-- Hero Introduction -->
         <section class="hero">
             <h1>Build Tailored Linux Systems Using AI Prompts</h1>
-            <p>Describe your requirements in plain English. Gemini AI formulates the optimal distribution, packages, and configuration, while our rootless Podman engine compiles a bootable ISO.</p>
+            <p>Upload a Debian or Ubuntu live ISO, choose a desktop and tools, then build a customized bootable ISO while preserving the source image's boot setup.</p>
         </section>
 
         <!-- STEP 1: Gemini AI Prompt Assistant -->
@@ -79,31 +79,30 @@
         <section id="step-recipe" class="card hidden">
             <div class="section-header">
                 <div class="section-title">
-                    <span>📋 Step 2: Verify & Customize Recipe</span>
+                    <span>📋 Step 2: Upload & Customize Your ISO</span>
                 </div>
             </div>
 
             <!-- AI Architectural Rationale -->
             <div class="ai-summary-box">
-                <strong style="color: #60a5fa; display: block; margin-bottom: 0.3rem;">🧠 Gemini AI Architecture Rationale:</strong>
-                <span id="recipe-summary">Loading description...</span>
+                <strong style="color: #60a5fa; display: block; margin-bottom: 0.3rem;">🧠 Build plan:</strong>
+                <span id="recipe-summary">Choose your live ISO, desktop environment, and additional packages. The uploaded image must be a Debian or Ubuntu x86_64 live ISO containing filesystem.squashfs.</span>
             </div>
 
             <div class="recipe-section">
                 <!-- Left Column: Base parameters -->
                 <div>
+                    <div class="form-group">
+                        <label for="source-iso">Source Linux live ISO:</label>
+                        <input id="source-iso" type="file" class="form-control" accept=".iso,application/x-iso9660-image" required>
+                        <small class="field-help">Supported: Debian/Ubuntu x86_64 live ISOs with filesystem.squashfs. Maximum upload size: 16 GiB.</small>
+                        <div id="source-iso-name" class="field-help"></div>
+                    </div>
+                    <div class="form-group">
+                        <label>Source distribution:</label>
+                        <div class="form-control">Detected from the uploaded ISO</div>
+                    </div>
                     <div class="form-row">
-                        <div class="form-group">
-                            <label>Base Distribution:</label>
-                            <select id="field-distribution" class="form-control">
-                                <option value="alpine">Alpine Linux (Ultralight, ~100MB)</option>
-                                <option value="arch">Arch Linux (Bleeding Edge / Pacman)</option>
-                                <option value="fedora">Fedora Linux (RPM / GNOME / Win11)</option>
-                                <option value="ubuntu">Ubuntu Linux (24.04 LTS / Noble)</option>
-                                <option value="debian">Debian GNU/Linux (Rock Solid / APT)</option>
-                                <option value="opensuse">openSUSE (Tumbleweed / Zypper)</option>
-                            </select>
-                        </div>
                         <div class="form-group">
                             <label>ISO Volume Label:</label>
                             <input id="field-isolabel" type="text" class="form-control" value="AI_LINUX">
@@ -112,38 +111,14 @@
 
                     <div class="form-row">
                         <div class="form-group">
-                            <label>System Hostname:</label>
-                            <input id="field-hostname" type="text" class="form-control" value="ailinux">
-                        </div>
-                        <div class="form-group">
                             <label>Desktop Environment:</label>
                             <select id="field-desktop" class="form-control">
-                                <option value="none">None (Headless CLI)</option>
-                                <option value="xfce">XFCE4 (Lightweight Desktop)</option>
-                                <option value="i3">i3 Window Manager</option>
+                                <option value="none">Keep source desktop unchanged</option>
+                                <option value="xfce">XFCE (lightweight)</option>
+                                <option value="gnome">GNOME</option>
+                                <option value="kde">KDE Plasma</option>
+                                <option value="i3">i3 window manager</option>
                             </select>
-                        </div>
-                    </div>
-
-                    <div class="form-row">
-                        <div class="form-group">
-                            <label>Default Username:</label>
-                            <input id="field-username" type="text" class="form-control" value="user">
-                        </div>
-                        <div class="form-group">
-                            <label>Default User Password:</label>
-                            <input id="field-userpass" type="text" class="form-control" value="live">
-                        </div>
-                    </div>
-
-                    <div class="form-row">
-                        <div class="form-group">
-                            <label>Root Password:</label>
-                            <input id="field-rootpass" type="text" class="form-control" value="root">
-                        </div>
-                        <div class="form-group">
-                            <label>Kernel Parameters:</label>
-                            <input id="field-kernel" type="text" class="form-control" value="quiet console=tty0">
                         </div>
                     </div>
                 </div>
@@ -151,12 +126,12 @@
                 <!-- Right Column: Packages & Conversational Refinement -->
                 <div>
                     <div class="form-group">
-                        <label>Target Packages to Install:</label>
+                        <label>Additional APT packages to install:</label>
                         <div id="packages-tags-container" class="packages-box">
                             <!-- Package pills rendered dynamically -->
                         </div>
                         <div class="tag-input-group">
-                            <input id="new-pkg-input" type="text" class="form-control" placeholder="Type package name and press Enter...">
+                            <input id="new-pkg-input" type="text" class="form-control" placeholder="e.g. gparted, testdisk, htop">
                             <button id="btn-add-pkg" class="btn-secondary">Add</button>
                         </div>
                     </div>
@@ -164,7 +139,7 @@
                     <!-- AI Conversational Refinement -->
                     <div class="refine-box">
                         <label style="font-size: 0.85rem; font-weight: 600; color: #a78bfa; margin-bottom: 0.4rem; display: block;">
-                            💬 Request Gemini AI Adjustments (e.g., "Add Wi-Fi tools and remove editor"):
+                            💬 Ask Gemini for package suggestions (e.g., "Add disk recovery tools"):
                         </label>
                         <div style="display: flex; gap: 0.5rem;">
                             <input id="refine-prompt" type="text" class="form-control" placeholder="Adjustment instruction...">
@@ -188,7 +163,7 @@
         <section id="step-build" class="card hidden">
             <div class="section-header">
                 <div class="section-title">
-                    <span>⚙️ Step 3: ISO Build Center (Rootless Podman)</span>
+                    <span>⚙️ Step 3: ISO Customization Center (Podman)</span>
                 </div>
                 <button id="btn-cancel-build" class="btn-danger">Cancel Build</button>
             </div>

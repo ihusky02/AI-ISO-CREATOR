@@ -52,7 +52,7 @@ public class GeminiAiServiceTests
 
         // Assert
         Assert.NotNull(recipe);
-        Assert.Equal("alpine", recipe.Distribution);
+        Assert.Equal("ubuntu", recipe.Distribution);
         Assert.Contains("testdisk", recipe.Packages);
         Assert.Contains("smartmontools", recipe.Packages);
         Assert.Equal("none", recipe.DesktopEnvironment);
@@ -70,7 +70,7 @@ public class GeminiAiServiceTests
         // Assert
         Assert.NotNull(recipe);
         Assert.Equal("xfce", recipe.DesktopEnvironment);
-        Assert.Contains("xfce4", recipe.Packages);
+        Assert.Contains("xfce4-terminal", recipe.Packages);
     }
 
     [Fact]
@@ -79,7 +79,7 @@ public class GeminiAiServiceTests
         // Arrange
         var initialRecipe = new IsoRecipe
         {
-            Distribution = "alpine",
+            Distribution = "ubuntu",
             Packages = new List<string> { "bash", "curl", "htop" }
         };
 

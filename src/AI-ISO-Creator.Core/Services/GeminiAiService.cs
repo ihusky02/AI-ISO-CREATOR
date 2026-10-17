@@ -357,13 +357,12 @@ public class GeminiAiService : IGeminiAiService
     private static string BuildSystemInstruction()
     {
         return """
-You are an expert Linux distribution architect and specialist in building live bootable Linux ISO images (Alpine Linux, Fedora, and Debian/Ubuntu).
-Your mission is to transform user intent expressed in natural language into a precise, cohesive machine-readable Linux ISO build recipe (IsoRecipe).
+You customize user-provided Ubuntu and Debian live ISO images with desktop environments and applications. Convert the user's intent into a precise ISO customization recipe. The source distribution is detected from the uploaded ISO; do not describe a different distribution as the build base.
 
 The returned format MUST be a valid JSON object with the following schema:
 {
-  "distribution": "alpine", "fedora", "arch", "ubuntu", "debian", or "opensuse",
-  "release": "rolling" for Arch, "40" for Fedora, "24.04" for Ubuntu, "bookworm" for Debian, "3.20" for Alpine, "tumbleweed" for openSUSE,
+  "distribution": "ubuntu",
+  "release": "detected from uploaded ISO",
   "arch": "x86_64",
   "isoLabel": "SHORT_UPPERCASE_LABEL_NO_SPACES",
   "hostname": "system-hostname",
@@ -373,7 +372,7 @@ The returned format MUST be a valid JSON object with the following schema:
   "enableSudo": true,
   "desktopEnvironment": "none", "xfce", "gnome", "kde", or "i3",
   "packages": [
-    "list", "of", "packages", "compatible", "with", "the", "chosen", "distro"
+    "APT package names available in Ubuntu or Debian repositories"
   ],
   "servicesToEnable": [
     "networking", "sshd"
@@ -387,15 +386,9 @@ The returned format MUST be a valid JSON object with the following schema:
 }
 
 RULES:
-1. Ensure package names in `packages` match the selected distribution:
-   - For Arch Linux: use pacman packages (`base-devel`, `git`, `neovim`, `hyprland`, `waybar`, `alacritty`, `zsh`, `sudo`).
-   - For Fedora: use dnf packages (`gcc-c++`, `cmake`, `dotnet-sdk-8.0`, `git`, `gnome-shell`, `win11-icon-theme`, `neovim`, `htop`).
-   - For Ubuntu: use apt packages (`build-essential`, `docker.io`, `docker-compose-v2`, `openssh-server`, `curl`, `htop`).
-   - For Alpine: use apk packages (`build-base`, `bash`, `curl`, `xfce4`, `openssh`, `htop`).
-   - For Debian: use apt packages (`build-essential`, `xfce4`, `openssh-server`, `sudo`, `curl`).
-   - For openSUSE: use zypper packages (`patterns-devel-base-devel_basis`, `kernel-default`, `git`, `curl`).
-2. Always ensure core essentials are included (e.g. bash/zsh, curl, sudo).
-3. If the user requests a graphical desktop (e.g. Windows 11-style, GNOME, XFCE), select the appropriate desktop environment and packages.
+1. Use Ubuntu/Debian APT package names only; never return packages exclusive to Fedora, Arch, Alpine, or openSUSE.
+2. For recovery tools, `photorec` is provided by `testdisk`, and `ddrescue` by `gddrescue`.
+3. Choose `desktopEnvironment` from `none`, `xfce`, `gnome`, `kde`, or `i3`; the builder installs the desktop packages.
 4. Return ONLY the raw JSON object without markdown formatting or surrounding explanations.
 """;
     }
@@ -411,19 +404,19 @@ RULES:
         {
             return new IsoRecipe
             {
-                Distribution = "arch",
-                Release = "rolling",
+                Distribution = "ubuntu",
+                Release = "detected",
                 Arch = "x86_64",
-                Hostname = "arch-ai",
-                IsoLabel = "ARCH_LINUX",
+                Hostname = "linux-ai",
+                IsoLabel = "LINUX_CUSTOM",
                 RootPassword = "root",
                 DefaultUsername = "user",
                 DefaultUserPassword = "live",
                 EnableSudo = true,
-                DesktopEnvironment = lower.Contains("hyprland") || lower.Contains("gui") ? "hyprland" : "none",
-                TargetUseCase = "Arch Linux Rolling Release Workstation",
-                Summary = "Arch Linux rolling release configured with bleeding-edge packages, development toolchain, and Wayland desktop.",
-                Packages = new List<string> { "base-devel", "git", "neovim", "zsh", "htop", "curl", "alacritty", "openssh", "sudo" },
+                DesktopEnvironment = lower.Contains("gui") ? "xfce" : "none",
+                TargetUseCase = "Linux Workstation",
+                Summary = "Customized uploaded live ISO with development tools and utilities.",
+                Packages = new List<string> { "build-essential", "git", "neovim", "zsh", "htop", "curl", "alacritty", "openssh-server", "sudo" },
                 ServicesToEnable = new List<string> { "sshd" }
             };
         }
@@ -453,27 +446,27 @@ RULES:
         {
             return new IsoRecipe
             {
-                Distribution = "fedora",
-                Release = "40",
+                Distribution = "ubuntu",
+                Release = "detected",
                 Arch = "x86_64",
-                Hostname = "fedora-ai",
-                IsoLabel = "FEDORA_DEV",
+                Hostname = "linux-ai",
+                IsoLabel = "LINUX_CUSTOM",
                 RootPassword = "root",
                 DefaultUsername = "user",
                 DefaultUserPassword = "live",
                 EnableSudo = true,
                 DesktopEnvironment = lower.Contains("win") || lower.Contains("gui") ? "gnome" : "none",
-                TargetUseCase = "Fedora C++/C# Developer Workstation with Modern GUI",
-                Summary = "Fedora Workstation configured with C++ tools (gcc-c++, cmake), .NET 8 SDK for C#, Git, and modern Windows 11 style UI enhancements.",
-                Packages = new List<string> { "gcc-c++", "cmake", "gdb", "dotnet-sdk-8.0", "git", "curl", "neovim", "htop", "gnome-shell", "gnome-terminal" },
-                ServicesToEnable = new List<string> { "NetworkManager", "sshd" }
+                TargetUseCase = "Linux Development Workstation",
+                Summary = "Customized uploaded live ISO with development tools and utilities.",
+                Packages = new List<string> { "g++", "cmake", "gdb", "git", "curl", "neovim", "htop", "gnome-terminal" },
+                ServicesToEnable = new List<string> { "sshd" }
             };
         }
 
         var recipe = new IsoRecipe
         {
-            Distribution = "alpine",
-            Release = "3.20",
+            Distribution = "ubuntu",
+            Release = "detected",
             Arch = "x86_64",
             Hostname = "ai-linux",
             IsoLabel = "AI_LINUX",
@@ -489,28 +482,28 @@ RULES:
             recipe.DesktopEnvironment = "xfce";
             recipe.TargetUseCase = "Lightweight XFCE Desktop Environment";
             recipe.Summary = "Optimized, lightweight Linux distribution with XFCE graphical desktop, web browser, and desktop utilities.";
-            recipe.Packages = new List<string> { "bash", "sudo", "curl", "xfce4", "xfce4-terminal", "chromium", "mousepad", "openssh", "htop" };
+            recipe.Packages = new List<string> { "bash", "sudo", "curl", "xfce4-terminal", "mousepad", "openssh-server", "htop" };
         }
         else if (lower.Contains("rescue") || lower.Contains("disk") || lower.Contains("recover") || lower.Contains("diag") || lower.Contains("ratunk"))
         {
             recipe.DesktopEnvironment = "none";
             recipe.TargetUseCase = "System Recovery & Hardware Diagnostics";
             recipe.Summary = "Emergency rescue distribution equipped with filesystem recovery, disk partitioning, and hardware diagnostic utilities.";
-            recipe.Packages = new List<string> { "bash", "sudo", "curl", "testdisk", "smartmontools", "parted", "e2fsprogs", "dosfstools", "pciutils", "lshw", "mc", "htop", "openssh" };
+            recipe.Packages = new List<string> { "bash", "sudo", "curl", "testdisk", "gddrescue", "smartmontools", "parted", "e2fsprogs", "dosfstools", "pciutils", "lshw", "mc", "htop", "openssh-server" };
         }
         else if (lower.Contains("net") || lower.Contains("nmap") || lower.Contains("sniff") || lower.Contains("audit") || lower.Contains("siec"))
         {
             recipe.DesktopEnvironment = "none";
             recipe.TargetUseCase = "Network Analysis & Security Auditing";
             recipe.Summary = "Comprehensive suite of networking tools for traffic inspection, port scanning, performance benchmarking, and security checks.";
-            recipe.Packages = new List<string> { "bash", "sudo", "curl", "nmap", "tcpdump", "iperf3", "wireshark-cli", "socat", "netcat-openbsd", "bind-tools", "iftop", "openssh" };
+            recipe.Packages = new List<string> { "bash", "sudo", "curl", "nmap", "tcpdump", "iperf3", "tshark", "socat", "netcat-openbsd", "dnsutils", "iftop", "openssh-server" };
         }
         else
         {
             recipe.DesktopEnvironment = "none";
             recipe.TargetUseCase = "Developer Workstation & CLI Environment";
             recipe.Summary = $"Custom Linux environment built for: \"{prompt}\" with essential CLI utilities and build toolchains.";
-            recipe.Packages = new List<string> { "bash", "sudo", "curl", "git", "neovim", "tmux", "htop", "build-base", "openssh" };
+            recipe.Packages = new List<string> { "bash", "sudo", "curl", "git", "neovim", "tmux", "htop", "build-essential", "openssh-server" };
         }
 
         return recipe;

@@ -160,29 +160,82 @@ public class ContainerBuilderService : IIsoBuilderService
         }
     }
 
-    public Task<BuildJob> StartBuildAsync(IsoRecipe recipe, CancellationToken cancellationToken = default)
+    public async Task<BuildJob> StartBuildAsync(
+        IsoRecipe recipe,
+        Stream sourceIso,
+        string sourceIsoFileName,
+        CancellationToken cancellationToken = default)
     {
+        ArgumentNullException.ThrowIfNull(recipe);
+        ArgumentNullException.ThrowIfNull(sourceIso);
+        if (!Path.GetExtension(sourceIsoFileName).Equals(".iso", StringComparison.OrdinalIgnoreCase))
+        {
+            throw new ArgumentException("The uploaded source file must have an .iso extension.", nameof(sourceIsoFileName));
+        }
+
+        ValidateRecipe(recipe);
         var job = new BuildJob
         {
             Id = Guid.NewGuid().ToString("N")[..8],
             Recipe = recipe,
+            SourceIsoFileName = Path.GetFileName(sourceIsoFileName),
             Status = BuildStatus.Queued,
             StatusMessage = "Build task queued...",
             ProgressPercent = 5,
             CreatedAt = DateTime.UtcNow
         };
 
+        var jobWorkDir = Path.Combine(_buildsRootDirectory, job.Id);
+        Directory.CreateDirectory(jobWorkDir);
+        try
+        {
+            await using var sourceFile = new FileStream(
+                Path.Combine(jobWorkDir, "source.iso"),
+                FileMode.CreateNew,
+                FileAccess.Write,
+                FileShare.None,
+                1024 * 1024,
+                useAsync: true);
+            await sourceIso.CopyToAsync(sourceFile, cancellationToken);
+            await sourceFile.FlushAsync(cancellationToken);
+        }
+        catch
+        {
+            Directory.Delete(jobWorkDir, recursive: true);
+            throw;
+        }
+
         _jobs[job.Id] = job;
         var jobCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         _cancellationTokens[job.Id] = jobCts;
 
-        AddLog(job, "info", $"Started new ISO build job [{job.Id}] for label: {recipe.IsoLabel} ({recipe.Distribution})");
+        AddLog(job, "info", $"Started ISO customization job [{job.Id}] from {job.SourceIsoFileName}.");
         NotifyJobUpdated(job);
 
-        // Run background build task
         _ = Task.Run(() => ExecuteBuildProcessAsync(job, jobCts.Token), jobCts.Token);
 
-        return Task.FromResult(job);
+        return job;
+    }
+
+    private static void ValidateRecipe(IsoRecipe recipe)
+    {
+        if (recipe.Packages == null || recipe.Packages.Any(package =>
+                string.IsNullOrWhiteSpace(package) ||
+                !System.Text.RegularExpressions.Regex.IsMatch(package, @"^[a-zA-Z0-9][a-zA-Z0-9.+-]*$")))
+        {
+            throw new ArgumentException("Package names may contain only letters, numbers, '.', '+', and '-'.");
+        }
+
+        if (recipe.DesktopEnvironment is not ("none" or "xfce" or "gnome" or "kde" or "i3"))
+        {
+            throw new ArgumentException("Choose a supported desktop environment: none, xfce, gnome, kde, or i3.");
+        }
+
+        if (string.IsNullOrWhiteSpace(recipe.IsoLabel) ||
+            !System.Text.RegularExpressions.Regex.IsMatch(recipe.IsoLabel, @"^[A-Za-z0-9_-]{1,32}$"))
+        {
+            throw new ArgumentException("The ISO label must contain 1-32 letters, numbers, underscores, or hyphens.");
+        }
     }
 
     private async Task ExecuteBuildProcessAsync(BuildJob job, CancellationToken ct)
@@ -217,40 +270,13 @@ public class ContainerBuilderService : IIsoBuilderService
             }
 
             job.Status = BuildStatus.InstallingPackages;
-            job.StatusMessage = "Starting Podman container and bootstrapping packages...";
+            job.StatusMessage = "Starting Podman container to customize the uploaded ISO...";
             job.ProgressPercent = 25;
             AddLog(job, "info", "Starting build environment inside Podman container...");
             NotifyJobUpdated(job);
 
             var isoOutputFileName = $"{job.Recipe.IsoLabel.ToLowerInvariant()}-{job.Id}.iso";
-            var distroLower = job.Recipe.Distribution.ToLowerInvariant();
-            string containerImage;
-            if (distroLower.Contains("fedora"))
-            {
-                containerImage = "fedora:40";
-            }
-            else if (distroLower.Contains("arch"))
-            {
-                containerImage = "archlinux:latest";
-            }
-            else if (distroLower.Contains("ubuntu"))
-            {
-                containerImage = "ubuntu:24.04";
-            }
-            else if (distroLower.Contains("debian"))
-            {
-                containerImage = "debian:bookworm-slim";
-            }
-            else if (distroLower.Contains("suse"))
-            {
-                containerImage = "opensuse/tumbleweed:latest";
-            }
-            else
-            {
-                containerImage = "alpine:3.20";
-            }
-
-            var (success, errorMsg) = await RunPodmanProcessAsync(job, jobWorkDir, containerImage, ct);
+            var (success, errorMsg) = await RunPodmanProcessAsync(job, jobWorkDir, "fedora:latest", ct);
 
             if (!success)
             {
@@ -343,11 +369,12 @@ public class ContainerBuilderService : IIsoBuilderService
             UseShellExecute = false,
             CreateNoWindow = true
         };
+        var errorLines = new ConcurrentQueue<string>();
 
         try
         {
             using var process = new Process { StartInfo = psi };
-            
+
             process.OutputDataReceived += (s, e) =>
             {
                 if (!string.IsNullOrEmpty(e.Data))
@@ -360,6 +387,11 @@ public class ContainerBuilderService : IIsoBuilderService
             {
                 if (!string.IsNullOrEmpty(e.Data))
                 {
+                    errorLines.Enqueue(e.Data);
+                    while (errorLines.Count > 20)
+                    {
+                        errorLines.TryDequeue(out _);
+                    }
                     HandleProcessOutputLine(job, e.Data, isError: true);
                 }
             };
@@ -376,7 +408,9 @@ public class ContainerBuilderService : IIsoBuilderService
 
             if (process.ExitCode != 0)
             {
-                return (false, $"Podman container exited with error code {process.ExitCode}.");
+                var errorOutput = string.Join(Environment.NewLine, errorLines);
+                var details = string.IsNullOrWhiteSpace(errorOutput) ? string.Empty : $" Last container errors:{Environment.NewLine}{errorOutput}";
+                return (false, $"Podman container exited with error code {process.ExitCode}.{details}");
             }
 
             return (true, null);
@@ -402,164 +436,36 @@ public class ContainerBuilderService : IIsoBuilderService
         {
             job.ProgressPercent = 50;
             job.Status = BuildStatus.InstallingPackages;
-            job.StatusMessage = "Bootstrapping target rootfs and installing packages...";
+            job.StatusMessage = "Extracting the uploaded live ISO and its filesystem...";
             NotifyJobUpdated(job);
         }
         else if (line.Contains("[STAGE 3/5]", StringComparison.OrdinalIgnoreCase))
         {
             job.ProgressPercent = 65;
-            job.Status = BuildStatus.Configuring;
-            job.StatusMessage = "Configuring users, credentials, and custom commands...";
+            job.Status = BuildStatus.InstallingPackages;
+            job.StatusMessage = "Enabling repositories and installing the selected desktop and applications...";
             NotifyJobUpdated(job);
         }
         else if (line.Contains("[STAGE 4/5]", StringComparison.OrdinalIgnoreCase))
         {
             job.ProgressPercent = 80;
             job.Status = BuildStatus.CreatingIso;
-            job.StatusMessage = "Compressing SquashFS and setting up bootloaders...";
+            job.StatusMessage = "Rebuilding the live filesystem image...";
             NotifyJobUpdated(job);
         }
         else if (line.Contains("[STAGE 5/5]", StringComparison.OrdinalIgnoreCase))
         {
             job.ProgressPercent = 90;
             job.Status = BuildStatus.CreatingIso;
-            job.StatusMessage = "Generating hybrid bootable ISO with xorriso...";
+            job.StatusMessage = "Rebuilding the ISO and preserving its boot metadata...";
             NotifyJobUpdated(job);
         }
 
         AddLog(job, level, line);
     }
 
-    private string GenerateBuildScript(IsoRecipe recipe, string jobId)
-    {
-        var packagesStr = string.Join(" ", recipe.Packages);
-        var isoFileName = $"{recipe.IsoLabel.ToLowerInvariant()}-{jobId}.iso";
-
-        var sb = new StringBuilder();
-        sb.AppendLine("#!/bin/sh");
-        sb.AppendLine("set -e");
-        sb.AppendLine("echo '=================================================='");
-        sb.AppendLine("echo '   AI-ISO-Creator: Building Live Linux ISO'");
-        sb.AppendLine("echo '=================================================='");
-        sb.AppendLine();
-        sb.AppendLine("WORKDIR='/workspace'");
-        sb.AppendLine("ROOTFS=\"$WORKDIR/rootfs\"");
-        sb.AppendLine("ISODIR=\"$WORKDIR/iso\"");
-        sb.AppendLine("OUTDIR=\"$WORKDIR/output\"");
-        sb.AppendLine();
-        sb.AppendLine("mkdir -p \"$ROOTFS\" \"$ISODIR/boot/syslinux\" \"$ISODIR/boot/grub\" \"$OUTDIR\"");
-        sb.AppendLine();
-        sb.AppendLine("echo '[STAGE 1/5] Installing ISO build toolchain in worker container...'");
-        sb.AppendLine("if command -v pacman >/dev/null 2>&1; then");
-        sb.AppendLine("    pacman -Sy --noconfirm xorriso syslinux squashfs-tools dosfstools arch-install-scripts");
-        sb.AppendLine("    echo '[STAGE 2/5] Bootstrapping target Arch rootfs via pacstrap...'");
-        sb.AppendLine($"    pacstrap -K \"$ROOTFS\" base linux linux-firmware {packagesStr} || true");
-        sb.AppendLine("elif command -v dnf >/dev/null 2>&1; then");
-        sb.AppendLine("    dnf install -y --setopt=install_weak_deps=False xorriso squashfs-tools dosfstools syslinux");
-        sb.AppendLine("    echo '[STAGE 2/5] Bootstrapping target rootfs via dnf...'");
-        sb.AppendLine($"    dnf --installroot=\"$ROOTFS\" --releasever=40 -y install --setopt=install_weak_deps=False @core kernel {packagesStr} || true");
-        sb.AppendLine("elif command -v zypper >/dev/null 2>&1; then");
-        sb.AppendLine("    zypper -n install xorriso squashfs syslinux dosfstools");
-        sb.AppendLine("    echo '[STAGE 2/5] Bootstrapping target openSUSE rootfs via zypper...'");
-        sb.AppendLine($"    zypper --root \"$ROOTFS\" -n install patterns-base-base kernel-default {packagesStr} || true");
-        sb.AppendLine("elif command -v apt-get >/dev/null 2>&1; then");
-        sb.AppendLine("    apt-get update && apt-get install -y xorriso syslinux-common isolinux squashfs-tools dosfstools debootstrap");
-        sb.AppendLine("    echo '[STAGE 2/5] Bootstrapping target rootfs via debootstrap...'");
-        sb.AppendLine("    DIST_SUITE=\"bookworm\"");
-        sb.AppendLine("    grep -qi ubuntu /etc/os-release && DIST_SUITE=\"noble\"");
-        sb.AppendLine("    debootstrap --arch=amd64 $DIST_SUITE \"$ROOTFS\" || true");
-        sb.AppendLine($"    chroot \"$ROOTFS\" apt-get update && chroot \"$ROOTFS\" apt-get install -y linux-image-generic linux-image-amd64 {packagesStr} || true");
-        sb.AppendLine("else");
-        sb.AppendLine("    apk update");
-        sb.AppendLine("    apk add --no-cache xorriso syslinux squashfs-tools dosfstools grub-efi efibootmgr mtools bash shadow curl");
-        sb.AppendLine("    echo '[STAGE 2/5] Bootstrapping target rootfs via apk...'");
-        sb.AppendLine("    mkdir -p \"$ROOTFS/etc/apk\"");
-        sb.AppendLine("    cp -R /etc/apk/keys \"$ROOTFS/etc/apk/\" 2>/dev/null || true");
-        sb.AppendLine("    cp /etc/apk/repositories \"$ROOTFS/etc/apk/\" 2>/dev/null || true");
-        sb.AppendLine("    apk add --root \"$ROOTFS\" --initdb --repositories-file /etc/apk/repositories \\");
-        sb.AppendLine($"        alpine-base alpine-conf linux-lts mkinitfs {packagesStr}");
-        sb.AppendLine("fi");
-        sb.AppendLine();
-        sb.AppendLine("echo '[STAGE 3/5] Configuring target system users and services...'");
-        sb.AppendLine($"echo '{recipe.Hostname}' > \"$ROOTFS/etc/hostname\"");
-        sb.AppendLine($"echo 'root:{recipe.RootPassword}' | chroot \"$ROOTFS\" chpasswd || true");
-        sb.AppendLine();
-
-        if (!string.IsNullOrWhiteSpace(recipe.DefaultUsername))
-        {
-            sb.AppendLine($"# Create user {recipe.DefaultUsername}");
-            sb.AppendLine($"chroot \"$ROOTFS\" useradd -m -s /bin/bash {recipe.DefaultUsername} 2>/dev/null || chroot \"$ROOTFS\" adduser -D -s /bin/bash {recipe.DefaultUsername} || true");
-            sb.AppendLine($"echo '{recipe.DefaultUsername}:{recipe.DefaultUserPassword}' | chroot \"$ROOTFS\" chpasswd || true");
-            if (recipe.EnableSudo)
-            {
-                sb.AppendLine("apk add --root \"$ROOTFS\" sudo 2>/dev/null || true");
-                sb.AppendLine($"chroot \"$ROOTFS\" usermod -aG wheel {recipe.DefaultUsername} 2>/dev/null || chroot \"$ROOTFS\" addgroup {recipe.DefaultUsername} wheel 2>/dev/null || true");
-                sb.AppendLine("echo '%wheel ALL=(ALL) ALL' >> \"$ROOTFS/etc/sudoers\" || true");
-            }
-        }
-
-        // Enable OpenRC services
-        foreach (var svc in recipe.ServicesToEnable)
-        {
-            sb.AppendLine($"chroot \"$ROOTFS\" rc-update add {svc} default 2>/dev/null || true");
-        }
-
-        // Run custom chroot commands
-        if (recipe.CustomCommands.Count > 0)
-        {
-            sb.AppendLine("# Executing user custom commands:");
-            foreach (var cmd in recipe.CustomCommands)
-            {
-                sb.AppendLine($"chroot \"$ROOTFS\" /bin/sh -c \"{cmd.Replace("\"", "\\\"")}\" || true");
-            }
-        }
-
-        sb.AppendLine();
-        sb.AppendLine("echo '[STAGE 4/5] Preparing kernel, initramfs, and SquashFS compression...'");
-        sb.AppendLine("# Copy kernel and initramfs to ISO structure");
-        sb.AppendLine("cp \"$ROOTFS/boot/vmlinuz-lts\" \"$ISODIR/boot/vmlinuz\" || cp \"$ROOTFS\"/boot/vmlinuz* \"$ISODIR/boot/vmlinuz\" 2>/dev/null || true");
-        sb.AppendLine("cp \"$ROOTFS/boot/initramfs-lts\" \"$ISODIR/boot/initramfs\" || cp \"$ROOTFS\"/boot/initramfs* \"$ISODIR/boot/initramfs\" 2>/dev/null || true");
-        sb.AppendLine();
-        sb.AppendLine("# Compress rootfs into SquashFS");
-        sb.AppendLine("mksquashfs \"$ROOTFS\" \"$ISODIR/boot/rootfs.squashfs\" -comp xz -noappend -wildcards -e \"$ROOTFS/boot/*\"");
-        sb.AppendLine();
-        sb.AppendLine("# Configure ISOLINUX / SYSLINUX for BIOS MBR");
-        sb.AppendLine("cat << 'EOF' > \"$ISODIR/boot/syslinux/syslinux.cfg\"");
-        sb.AppendLine("DEFAULT linux");
-        sb.AppendLine("LABEL linux");
-        sb.AppendLine("  SAY Booting AI Linux Live System...");
-        sb.AppendLine("  LINUX /boot/vmlinuz");
-        sb.AppendLine("  INITRD /boot/initramfs");
-        sb.AppendLine($"  APPEND {recipe.KernelParameters} modules=loop,squashfs,sd-mod,usb-storage");
-        sb.AppendLine("EOF");
-        sb.AppendLine();
-        sb.AppendLine("cp /usr/share/syslinux/isolinux.bin \"$ISODIR/boot/syslinux/\" 2>/dev/null || true");
-        sb.AppendLine("cp /usr/share/syslinux/ldlinux.c32 \"$ISODIR/boot/syslinux/\" 2>/dev/null || true");
-        sb.AppendLine();
-        sb.AppendLine("# Configure GRUB for UEFI");
-        sb.AppendLine("cat << 'EOF' > \"$ISODIR/boot/grub/grub.cfg\"");
-        sb.AppendLine("set default=0");
-        sb.AppendLine("set timeout=5");
-        sb.AppendLine($"menuentry \"{recipe.IsoLabel} Live\" {{");
-        sb.AppendLine("    linux /boot/vmlinuz " + recipe.KernelParameters + " modules=loop,squashfs,sd-mod,usb-storage");
-        sb.AppendLine("    initrd /boot/initramfs");
-        sb.AppendLine("}");
-        sb.AppendLine("EOF");
-        sb.AppendLine();
-        sb.AppendLine("echo '[STAGE 5/5] Generating bootable hybrid ISO image with xorriso...'");
-        sb.AppendLine($"xorriso -as mkisofs -r -V \"{recipe.IsoLabel}\" \\");
-        sb.AppendLine("    -J -joliet-long \\");
-        sb.AppendLine("    -b boot/syslinux/isolinux.bin -c boot/syslinux/boot.cat \\");
-        sb.AppendLine("    -no-emul-boot -boot-load-size 4 -boot-info-table \\");
-        sb.AppendLine($"    -o \"$OUTDIR/{isoFileName}\" \"$ISODIR\" || \\");
-        sb.AppendLine($"xorriso -as mkisofs -r -V \"{recipe.IsoLabel}\" -o \"$OUTDIR/{isoFileName}\" \"$ISODIR\"");
-        sb.AppendLine();
-        sb.AppendLine("echo 'Success! ISO image generated:'");
-        sb.AppendLine($"ls -lh \"$OUTDIR/{isoFileName}\"");
-        sb.AppendLine("echo '=================================================='");
-
-        return sb.ToString();
-    }
+    internal static string GenerateBuildScript(IsoRecipe recipe, string jobId) =>
+        UploadedIsoBuildScript.Generate(recipe, jobId);
 
     private void AddLog(BuildJob job, string level, string message)
     {

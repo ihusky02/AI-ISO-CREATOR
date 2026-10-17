@@ -52,6 +52,11 @@ public class BuildJob
     public IsoRecipe Recipe { get; set; } = new();
 
     /// <summary>
+    /// Original filename of the user-supplied source ISO.
+    /// </summary>
+    public string SourceIsoFileName { get; set; } = string.Empty;
+
+    /// <summary>
     /// Current execution status of the job.
     /// </summary>
     public BuildStatus Status { get; set; } = BuildStatus.Queued;

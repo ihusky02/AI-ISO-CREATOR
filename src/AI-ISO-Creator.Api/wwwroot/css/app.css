@@ -182,6 +182,14 @@ main {
     border-color: var(--primary);
 }
 
+.field-help {
+    display: block;
+    margin-top: 0.4rem;
+    color: var(--text-muted);
+    font-size: 0.8rem;
+    line-height: 1.45;
+}
+
 /* Prompt Box */
 .prompt-area {
     display: flex;

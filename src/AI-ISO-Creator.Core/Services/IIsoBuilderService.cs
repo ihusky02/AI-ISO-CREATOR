@@ -10,7 +10,11 @@ public interface IIsoBuilderService
     /// <summary>
     /// Enqueues and initiates an asynchronous containerized build job from the provided recipe.
     /// </summary>
-    Task<BuildJob> StartBuildAsync(IsoRecipe recipe, CancellationToken cancellationToken = default);
+    Task<BuildJob> StartBuildAsync(
+        IsoRecipe recipe,
+        Stream sourceIso,
+        string sourceIsoFileName,
+        CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Retrieves a build job by its identifier.

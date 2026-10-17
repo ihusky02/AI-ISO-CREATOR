@@ -104,6 +104,12 @@ function setupEventListeners() {
 
     // Start build process
     document.getElementById('btn-start-build').addEventListener('click', startBuild);
+    document.getElementById('source-iso').addEventListener('change', (event) => {
+        const file = event.target.files[0];
+        document.getElementById('source-iso-name').textContent = file
+            ? `${file.name} (${formatBytes(file.size)})`
+            : '';
+    });
 
     // Cancel active build
     document.getElementById('btn-cancel-build').addEventListener('click', cancelBuild);
@@ -218,14 +224,8 @@ async function refineRecipe() {
 // 6. Populate form with recipe values
 function renderRecipe(recipe) {
     document.getElementById('recipe-summary').textContent = recipe.summary || 'No rationale available.';
-    document.getElementById('field-distribution').value = recipe.distribution || 'alpine';
     document.getElementById('field-isolabel').value = recipe.isoLabel || 'AI_LINUX';
-    document.getElementById('field-hostname').value = recipe.hostname || 'ailinux';
     document.getElementById('field-desktop').value = recipe.desktopEnvironment || 'none';
-    document.getElementById('field-rootpass').value = recipe.rootPassword || 'root';
-    document.getElementById('field-username').value = recipe.defaultUsername || 'user';
-    document.getElementById('field-userpass').value = recipe.defaultUserPassword || 'live';
-    document.getElementById('field-kernel').value = recipe.kernelParameters || 'quiet console=tty0';
 
     renderPackagesTags(recipe.packages || []);
 }
@@ -264,19 +264,19 @@ function addPackageFromInput() {
 function updateRecipeFromForm() {
     if (!currentRecipe) return;
 
-    currentRecipe.distribution = document.getElementById('field-distribution').value;
     currentRecipe.isoLabel = document.getElementById('field-isolabel').value;
-    currentRecipe.hostname = document.getElementById('field-hostname').value;
     currentRecipe.desktopEnvironment = document.getElementById('field-desktop').value;
-    currentRecipe.rootPassword = document.getElementById('field-rootpass').value;
-    currentRecipe.defaultUsername = document.getElementById('field-username').value;
-    currentRecipe.defaultUserPassword = document.getElementById('field-userpass').value;
-    currentRecipe.kernelParameters = document.getElementById('field-kernel').value;
 }
 
 // 7. Enqueue build job and switch to build center
 async function startBuild() {
     updateRecipeFromForm();
+    const sourceIso = document.getElementById('source-iso').files[0];
+    if (!sourceIso) {
+        alert('Choose a Debian or Ubuntu live ISO file first.');
+        document.getElementById('source-iso').focus();
+        return;
+    }
 
     const btn = document.getElementById('btn-start-build');
     btn.disabled = true;
@@ -287,14 +287,16 @@ async function startBuild() {
     terminalBody.innerHTML = '';
 
     try {
+        const formData = new FormData();
+        formData.append('sourceIso', sourceIso);
+        formData.append('recipe', JSON.stringify(currentRecipe));
         const res = await fetch('/api/build', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(currentRecipe)
+            body: formData
         });
 
         if (!res.ok) {
-            const err = await res.json();
+            const err = await res.json().catch(() => ({}));
             throw new Error(err.detail || err.error || 'Failed to initiate build.');
         }
 

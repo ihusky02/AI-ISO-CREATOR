@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Text.Json;
+using Microsoft.AspNetCore.Http.Features;
 using AI_ISO_Creator.Api.Services;
 using AI_ISO_Creator.Core.Configuration;
 using AI_ISO_Creator.Core.Models;
@@ -8,6 +9,10 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Options;
 
 var builder = WebApplication.CreateBuilder(args);
+const long MaxSourceIsoSizeBytes = 16L * 1024 * 1024 * 1024;
+const long MaxUploadRequestSizeBytes = MaxSourceIsoSizeBytes + 1024 * 1024;
+builder.WebHost.ConfigureKestrel(options => options.Limits.MaxRequestBodySize = MaxUploadRequestSizeBytes);
+builder.Services.Configure<FormOptions>(options => options.MultipartBodyLengthLimit = MaxSourceIsoSizeBytes);
 
 // Service dependencies registration
 builder.Services.AddSingleton<AppSettingsService>();
@@ -136,12 +141,78 @@ app.MapPost("/api/ai/refine", async (IGeminiAiService aiService, [FromBody] Refi
 });
 
 // ISO build engine endpoints
-app.MapPost("/api/build", async (IIsoBuilderService builderSvc, [FromBody] IsoRecipe recipe) =>
+app.MapPost("/api/build", async (HttpRequest request, IIsoBuilderService builderSvc, CancellationToken ct) =>
 {
+    if (!request.HasFormContentType)
+    {
+        return Results.BadRequest(new { error = "Upload a source ISO using multipart form data." });
+    }
+
     try
     {
-        var job = await builderSvc.StartBuildAsync(recipe);
+        var form = await request.ReadFormAsync(ct);
+        var sourceIso = form.Files.GetFile("sourceIso");
+        if (sourceIso == null || sourceIso.Length == 0)
+        {
+            return Results.BadRequest(new { error = "Choose a non-empty Linux live ISO file." });
+        }
+
+        if (sourceIso.Length > MaxSourceIsoSizeBytes)
+        {
+            return Results.BadRequest(new { error = $"The ISO exceeds the maximum size of {MaxSourceIsoSizeBytes / (1024 * 1024 * 1024)} GiB." });
+        }
+
+        if (!Path.GetExtension(sourceIso.FileName).Equals(".iso", StringComparison.OrdinalIgnoreCase))
+        {
+            return Results.BadRequest(new { error = "The uploaded file must have an .iso extension." });
+        }
+
+        if (sourceIso.Length < 32774)
+        {
+            return Results.BadRequest(new { error = "The uploaded file is too small to be a valid ISO image." });
+        }
+
+        await using (var validationStream = sourceIso.OpenReadStream())
+        {
+            validationStream.Position = 32769;
+            var volumeDescriptorId = new byte[5];
+            await validationStream.ReadExactlyAsync(volumeDescriptorId, ct);
+            if (!volumeDescriptorId.SequenceEqual(new byte[] { 67, 68, 48, 48, 49 }))
+            {
+                return Results.BadRequest(new { error = "The file does not contain an ISO-9660 volume descriptor." });
+            }
+        }
+
+        var recipeJson = form["recipe"].ToString();
+        if (string.IsNullOrWhiteSpace(recipeJson))
+        {
+            return Results.BadRequest(new { error = "Build configuration is missing." });
+        }
+
+        var recipe = JsonSerializer.Deserialize<IsoRecipe>(recipeJson, new JsonSerializerOptions
+        {
+            PropertyNameCaseInsensitive = true
+        });
+        if (recipe == null)
+        {
+            return Results.BadRequest(new { error = "Build configuration is invalid." });
+        }
+
+        await using var sourceStream = sourceIso.OpenReadStream();
+        var job = await builderSvc.StartBuildAsync(recipe, sourceStream, sourceIso.FileName, ct);
         return Results.Ok(job);
+    }
+    catch (ArgumentException ex)
+    {
+        return Results.BadRequest(new { error = ex.Message });
+    }
+    catch (InvalidDataException ex)
+    {
+        return Results.BadRequest(new { error = ex.Message });
+    }
+    catch (JsonException)
+    {
+        return Results.BadRequest(new { error = "Build configuration must be valid JSON." });
     }
     catch (Exception ex)
     {
